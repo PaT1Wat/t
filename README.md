@@ -1,6 +1,6 @@
 # MangaRec - ระบบแนะนำมังงะและนิยาย
 
-ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย AI ที่เข้าใจรสนิยมของผู้ใช้
+ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย **Python** + AI ที่เข้าใจรสนิยมของผู้ใช้
 
 ## 🌟 Features
 
@@ -20,56 +20,55 @@
 - 🛡️ **Review Moderation** - ตรวจสอบและอนุมัติรีวิว
 
 ### AI Recommendation System
-- **Content-Based Filtering** - TF-IDF + Cosine Similarity สำหรับหาหนังสือที่คล้ายกัน
-- **Collaborative Filtering** - KNN + SVD สำหรับแนะนำจากพฤติกรรมผู้ใช้
+- **Content-Based Filtering** - TF-IDF + Cosine Similarity สำหรับหาหนังสือที่คล้ายกัน (scikit-learn)
+- **Collaborative Filtering** - KNN + SVD สำหรับแนะนำจากพฤติกรรมผู้ใช้ (scikit-learn)
 - **Hybrid Approach** - ผสมผสานทั้งสองวิธีเพื่อคำแนะนำที่แม่นยำ
 
 ## 🛠️ Tech Stack
 
-### Backend
-- **Node.js** + **Express.js** - RESTful API
+### Backend (Python)
+- **Flask** - Web Framework
+- **Flask-SQLAlchemy** - ORM for PostgreSQL
 - **PostgreSQL** - Database
 - **Firebase Admin SDK** - Authentication
-- **Natural.js** - TF-IDF และ Text Processing
-- **ml-knn** - K-Nearest Neighbors
+- **scikit-learn** - TF-IDF, Cosine Similarity, KNN, SVD
+- **pandas/numpy** - Data Processing
 
-### Frontend
-- **React** + **TypeScript** - UI Framework
-- **TailwindCSS** - Styling
-- **React Router** - Navigation
-- **Firebase** - Authentication
-- **Axios** - HTTP Client
+### Frontend (Python + HTML/JS)
+- **Flask** - Web Templates
+- **TailwindCSS** - Styling (via CDN)
+- **Vanilla JavaScript** - Interactivity
 
 ## 📁 Project Structure
 
 ```
 ├── backend/
-│   ├── src/
-│   │   ├── config/         # Database & Firebase config
-│   │   ├── controllers/    # Route handlers
-│   │   ├── middleware/     # Auth & Validation
-│   │   ├── routes/         # API routes
-│   │   ├── services/       # Business logic (Recommendations, Search)
-│   │   ├── app.js          # Express app
-│   │   └── server.js       # Entry point
-│   ├── tests/              # API tests
-│   └── package.json
+│   ├── app/
+│   │   ├── models/           # SQLAlchemy models
+│   │   ├── routes/           # API route blueprints
+│   │   ├── services/         # Recommendation & Search services
+│   │   ├── utils/            # Auth & Validation helpers
+│   │   └── __init__.py       # Flask app factory
+│   ├── tests/                # pytest tests
+│   ├── requirements.txt
+│   └── run.py                # Entry point
 │
 └── frontend/
-    ├── src/
-    │   ├── components/     # Reusable UI components
-    │   ├── pages/          # Page components
-    │   ├── services/       # API & Firebase services
-    │   ├── context/        # React Context (Auth)
-    │   ├── types/          # TypeScript types
-    │   └── App.tsx         # Main app component
-    └── package.json
+    ├── templates/            # Jinja2 templates
+    │   ├── base.html
+    │   ├── home.html
+    │   ├── search.html
+    │   ├── book_detail.html
+    │   └── ...
+    ├── static/               # CSS & JS files
+    ├── requirements.txt
+    └── app.py                # Frontend Flask app
 ```
 
 ## 🚀 Getting Started
 
 ### Prerequisites
-- Node.js 18+
+- Python 3.9+
 - PostgreSQL 14+
 - Firebase Project (for authentication)
 
@@ -80,27 +79,36 @@
 cd backend
 ```
 
-2. Install dependencies:
+2. Create virtual environment:
 ```bash
-npm install
+python -m venv venv
+source venv/bin/activate  # Linux/Mac
+# or: venv\Scripts\activate  # Windows
 ```
 
-3. Create `.env` file from example:
+3. Install dependencies:
+```bash
+pip install -r requirements.txt
+```
+
+4. Create `.env` file from example:
 ```bash
 cp .env.example .env
 ```
 
-4. Configure environment variables:
+5. Configure environment variables:
 ```env
 DATABASE_URL=postgresql://user:password@localhost:5432/manga_recommendation
 FIREBASE_PROJECT_ID=your-firebase-project-id
-CORS_ORIGIN=http://localhost:3000
+SECRET_KEY=your-secret-key
 ```
 
-5. Initialize database (tables are auto-created on first run):
+6. Run the server:
 ```bash
-npm run dev
+python run.py
 ```
+
+The API will be available at `http://localhost:5000`
 
 ### Frontend Setup
 
@@ -109,28 +117,23 @@ npm run dev
 cd frontend
 ```
 
-2. Install dependencies:
+2. Create virtual environment:
 ```bash
-npm install
+python -m venv venv
+source venv/bin/activate
 ```
 
-3. Create `.env` file:
+3. Install dependencies:
 ```bash
-cp .env.example .env
+pip install -r requirements.txt
 ```
 
-4. Configure Firebase:
-```env
-REACT_APP_API_URL=http://localhost:3001/api
-REACT_APP_FIREBASE_API_KEY=your-api-key
-REACT_APP_FIREBASE_PROJECT_ID=your-project-id
-# ... other Firebase config
+4. Run the frontend:
+```bash
+python app.py
 ```
 
-5. Start development server:
-```bash
-npm start
-```
+The web UI will be available at `http://localhost:3000`
 
 ## 📡 API Endpoints
 
@@ -141,32 +144,32 @@ npm start
 
 ### Books
 - `GET /api/books` - List all books
-- `GET /api/books/:id` - Get book details
-- `GET /api/books/type/:type` - Get books by type
+- `GET /api/books/<id>` - Get book details
+- `GET /api/books/type/<type>` - Get books by type
 - `GET /api/books/top-rated` - Get top rated books
 - `GET /api/books/recent` - Get recently added books
 
 ### Search & Recommendations
-- `GET /api/search` - Search books with filters
+- `GET /api/search/` - Search books with filters
 - `GET /api/search/autocomplete` - Autocomplete suggestions
 - `GET /api/search/recommendations` - Personalized recommendations
-- `GET /api/search/similar/:bookId` - Similar books
+- `GET /api/search/similar/<book_id>` - Similar books
 - `GET /api/search/filters` - Available filter options
 
 ### Reviews
-- `GET /api/reviews/book/:bookId` - Get book reviews
-- `POST /api/reviews/book/:bookId` - Create review
-- `PUT /api/reviews/:reviewId` - Update review
-- `DELETE /api/reviews/:reviewId` - Delete review
+- `GET /api/reviews/book/<book_id>` - Get book reviews
+- `POST /api/reviews/book/<book_id>` - Create review
+- `PUT /api/reviews/<review_id>` - Update review
+- `DELETE /api/reviews/<review_id>` - Delete review
 
 ### Favorites
 - `GET /api/favorites` - Get user favorites
-- `POST /api/favorites/:bookId` - Add to favorites
-- `DELETE /api/favorites/:bookId` - Remove from favorites
+- `POST /api/favorites/<book_id>` - Add to favorites
+- `DELETE /api/favorites/<book_id>` - Remove from favorites
 
 ## 🗄️ Database Schema
 
-### Tables
+### Tables (SQLAlchemy Models)
 - **users** - User accounts
 - **books** - Book information
 - **authors** - Author information
@@ -188,11 +191,8 @@ npm start
 ```bash
 # Backend tests
 cd backend
-npm test
-
-# Frontend tests
-cd frontend
-npm test
+pip install pytest
+pytest
 ```
 
 ## 📝 License
