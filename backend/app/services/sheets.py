@@ -47,10 +47,18 @@ class GoogleSheetsService:
         'reading_history': ['id', 'user_id', 'book_id', 'view_count', 'last_viewed_at', 'created_at']
     }
     
+    # Field type definitions for parsing
+    JSON_FIELDS = {'tags', 'genres', 'filters'}
+    BOOLEAN_FIELDS = {'is_nsfw', 'is_spoiler', 'is_approved'}
+    INTEGER_FIELDS = {'rating', 'helpful_count', 'view_count', 'publication_year', 
+                      'total_chapters', 'total_volumes', 'total_reviews', 'results_count'}
+    FLOAT_FIELDS = {'average_rating'}
+    
     def __init__(self):
         self.client = None
         self.spreadsheet = None
         self._initialized = False
+        self._mock_mode = False
     
     def _get_credentials(self):
         """Get Google credentials from environment or file."""
@@ -58,24 +66,28 @@ class GoogleSheetsService:
         credentials_file = os.getenv('GOOGLE_CREDENTIALS_FILE')
         
         if credentials_json:
-            credentials_dict = json.loads(credentials_json)
-            return Credentials.from_service_account_info(credentials_dict, scopes=self.SCOPES)
+            try:
+                credentials_dict = json.loads(credentials_json)
+                return Credentials.from_service_account_info(credentials_dict, scopes=self.SCOPES)
+            except json.JSONDecodeError as e:
+                print(f"Error parsing GOOGLE_CREDENTIALS_JSON: {e}")
+                return None
         elif credentials_file and os.path.exists(credentials_file):
             return Credentials.from_service_account_file(credentials_file, scopes=self.SCOPES)
         else:
-            # Return None for development/testing without credentials
             return None
     
     def initialize(self):
         """Initialize connection to Google Sheets."""
         if self._initialized:
-            return True
+            return not self._mock_mode
             
         try:
             credentials = self._get_credentials()
             if credentials is None:
-                print("Warning: No Google credentials found. Using mock data.")
+                print("Warning: No Google credentials found. Running in mock mode with empty data.")
                 self._initialized = True
+                self._mock_mode = True
                 return False
             
             self.client = gspread.authorize(credentials)
@@ -130,21 +142,22 @@ class GoogleSheetsService:
             if i < len(row):
                 value = row[i]
                 # Parse JSON fields
-                if header in ['tags', 'genres', 'filters']:
+                if header in self.JSON_FIELDS:
                     try:
                         result[header] = json.loads(value) if value else []
                     except (json.JSONDecodeError, TypeError):
                         result[header] = []
                 # Parse boolean fields
-                elif header in ['is_nsfw', 'is_spoiler', 'is_approved']:
+                elif header in self.BOOLEAN_FIELDS:
                     result[header] = str(value).lower() == 'true'
-                # Parse numeric fields
-                elif header in ['rating', 'helpful_count', 'view_count', 'publication_year', 'total_chapters', 'total_volumes', 'total_reviews', 'results_count']:
+                # Parse integer fields
+                elif header in self.INTEGER_FIELDS:
                     try:
                         result[header] = int(value) if value else 0
                     except (ValueError, TypeError):
                         result[header] = 0
-                elif header in ['average_rating']:
+                # Parse float fields
+                elif header in self.FLOAT_FIELDS:
                     try:
                         result[header] = float(value) if value else 0.0
                     except (ValueError, TypeError):
