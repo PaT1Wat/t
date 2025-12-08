@@ -1,121 +1,137 @@
-"""Author routes for CRUD operations."""
+"""
+Author routes for CRUD operations.
+"""
 
 from flask import Blueprint, request, jsonify
-from app.models import Author, Book
-from app import db
-from app.utils import authenticate, require_admin, get_pagination, validate_uuid
+from app.services.sheets import sheets_service
+from app.utils.auth import admin_required
+from app.utils.validation import validate_required_fields, validate_pagination
 
 bp = Blueprint('authors', __name__)
 
 
-@bp.route('/', methods=['GET'])
-def get_all_authors():
+@bp.route('', methods=['GET'])
+@validate_pagination
+def get_authors():
     """Get all authors with pagination."""
-    pagination = get_pagination()
+    page = request.pagination['page']
+    limit = request.pagination['limit']
     
-    total = Author.query.count()
-    authors = Author.query.order_by(Author.name.asc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
+    authors = sheets_service.get_all('authors')
+    
+    # Calculate book count for each author
+    books = sheets_service.get_all('books')
+    book_counts = {}
+    for book in books:
+        author_id = book.get('author_id')
+        if author_id:
+            book_counts[author_id] = book_counts.get(author_id, 0) + 1
+    
+    for author in authors:
+        author['book_count'] = book_counts.get(author['id'], 0)
+    
+    # Pagination
+    total = len(authors)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = authors[start:end]
     
     return jsonify({
-        'authors': [a.to_dict() for a in authors],
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
+        'results': paginated,
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'total_pages': (total + limit - 1) // limit if limit > 0 else 0
     })
 
 
 @bp.route('/<author_id>', methods=['GET'])
 def get_author(author_id):
-    """Get a single author by ID with their books."""
-    if not validate_uuid(author_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Get author by ID."""
+    author = sheets_service.get_by_id('authors', author_id)
     
-    author = Author.query.get(author_id)
     if not author:
-        return jsonify({'error': 'Author not found', 'message': 'ไม่พบผู้แต่ง'}), 404
+        return jsonify({
+            'error': 'ไม่พบผู้แต่ง',
+            'error_en': 'Author not found'
+        }), 404
     
-    books = Book.query.filter_by(author_id=author_id).order_by(Book.created_at.desc()).all()
+    # Get author's books
+    books = sheets_service.find_by_field('books', 'author_id', author_id)
+    author['books'] = books
+    author['book_count'] = len(books)
+    
+    return jsonify(author)
+
+
+@bp.route('', methods=['POST'])
+@admin_required
+@validate_required_fields(['name'])
+def create_author():
+    """Create a new author (admin only)."""
+    data = request.get_json()
+    
+    author_data = {
+        'name': data['name'],
+        'name_thai': data.get('name_thai'),
+        'bio': data.get('bio'),
+        'bio_thai': data.get('bio_thai'),
+        'image_url': data.get('image_url')
+    }
+    
+    author = sheets_service.create('authors', author_data)
+    
+    if author:
+        return jsonify(author), 201
     
     return jsonify({
-        'author': author.to_dict(),
-        'books': [b.to_dict() for b in books]
-    })
-
-
-@bp.route('/', methods=['POST'])
-@authenticate
-@require_admin
-def create_author():
-    """Admin: Create a new author."""
-    data = request.get_json() or {}
-    
-    name = data.get('name')
-    if not name:
-        return jsonify({'errors': ['ต้องระบุชื่อผู้แต่ง']}), 400
-    
-    author = Author(
-        name=name,
-        name_thai=data.get('name_thai'),
-        bio=data.get('bio'),
-        bio_thai=data.get('bio_thai'),
-        image_url=data.get('image_url')
-    )
-    
-    db.session.add(author)
-    db.session.commit()
-    
-    return jsonify({'author': author.to_dict(), 'message': 'เพิ่มผู้แต่งสำเร็จ'}), 201
+        'error': 'ไม่สามารถสร้างผู้แต่งได้',
+        'error_en': 'Could not create author'
+    }), 500
 
 
 @bp.route('/<author_id>', methods=['PUT'])
-@authenticate
-@require_admin
+@admin_required
 def update_author(author_id):
-    """Admin: Update an author."""
-    if not validate_uuid(author_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Update an author (admin only)."""
+    data = request.get_json()
     
-    author = Author.query.get(author_id)
-    if not author:
-        return jsonify({'error': 'Author not found', 'message': 'ไม่พบผู้แต่ง'}), 404
+    existing = sheets_service.get_by_id('authors', author_id)
+    if not existing:
+        return jsonify({
+            'error': 'ไม่พบผู้แต่ง',
+            'error_en': 'Author not found'
+        }), 404
     
-    data = request.get_json() or {}
+    allowed_fields = ['name', 'name_thai', 'bio', 'bio_thai', 'image_url']
+    update_data = {k: v for k, v in data.items() if k in allowed_fields}
     
-    if 'name' in data:
-        author.name = data['name']
-    if 'name_thai' in data:
-        author.name_thai = data['name_thai']
-    if 'bio' in data:
-        author.bio = data['bio']
-    if 'bio_thai' in data:
-        author.bio_thai = data['bio_thai']
-    if 'image_url' in data:
-        author.image_url = data['image_url']
+    updated = sheets_service.update('authors', author_id, update_data)
     
-    db.session.commit()
+    if updated:
+        return jsonify(updated)
     
-    return jsonify({'author': author.to_dict(), 'message': 'อัพเดทผู้แต่งสำเร็จ'})
+    return jsonify({
+        'error': 'ไม่สามารถอัพเดทผู้แต่งได้',
+        'error_en': 'Could not update author'
+    }), 500
 
 
 @bp.route('/<author_id>', methods=['DELETE'])
-@authenticate
-@require_admin
+@admin_required
 def delete_author(author_id):
-    """Admin: Delete an author."""
-    if not validate_uuid(author_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Delete an author (admin only)."""
+    existing = sheets_service.get_by_id('authors', author_id)
+    if not existing:
+        return jsonify({
+            'error': 'ไม่พบผู้แต่ง',
+            'error_en': 'Author not found'
+        }), 404
     
-    author = Author.query.get(author_id)
-    if not author:
-        return jsonify({'error': 'Author not found', 'message': 'ไม่พบผู้แต่ง'}), 404
+    if sheets_service.delete('authors', author_id):
+        return jsonify({'message': 'ลบผู้แต่งเรียบร้อยแล้ว', 'message_en': 'Author deleted successfully'})
     
-    db.session.delete(author)
-    db.session.commit()
-    
-    return jsonify({'message': 'ลบผู้แต่งสำเร็จ'})
+    return jsonify({
+        'error': 'ไม่สามารถลบผู้แต่งได้',
+        'error_en': 'Could not delete author'
+    }), 500

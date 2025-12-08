@@ -1,12 +1,9 @@
 import os
 from flask import Flask
 from flask_cors import CORS
-from flask_sqlalchemy import SQLAlchemy
 from dotenv import load_dotenv
 
 load_dotenv()
-
-db = SQLAlchemy()
 
 
 def create_app():
@@ -15,15 +12,9 @@ def create_app():
     
     # Configuration
     app.config['SECRET_KEY'] = os.getenv('SECRET_KEY', 'dev-secret-key')
-    app.config['SQLALCHEMY_DATABASE_URI'] = os.getenv(
-        'DATABASE_URL', 
-        'postgresql://localhost:5432/manga_recommendation'
-    )
-    app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
     
-    # Initialize extensions
+    # Initialize CORS
     CORS(app, origins=os.getenv('CORS_ORIGINS', '*').split(','))
-    db.init_app(app)
     
     # Register blueprints
     from app.routes import users, books, authors, publishers, reviews, favorites, search
@@ -46,13 +37,10 @@ def create_app():
     def index():
         return {
             'name': 'Manga/Novel Recommendation API',
-            'version': '1.0.0',
-            'description': 'API สำหรับระบบแนะนำมังงะและนิยาย',
-            'language': 'Python/Flask'
+            'version': '2.0.0',
+            'description': 'API สำหรับระบบแนะนำมังงะและนิยาย (Google Sheets Backend)',
+            'language': 'Python/Flask',
+            'data_source': 'Google Sheets'
         }
-    
-    # Create tables
-    with app.app_context():
-        db.create_all()
     
     return app

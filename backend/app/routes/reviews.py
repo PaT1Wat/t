@@ -1,288 +1,290 @@
-"""Review routes for managing book reviews."""
+"""
+Review routes for book reviews and ratings.
+"""
 
-from flask import Blueprint, request, jsonify
-from sqlalchemy import func
-from app.models import Review, Book
-from app import db
-from app.utils import authenticate, require_moderator, get_current_user, get_pagination, validate_uuid
+from flask import Blueprint, request, jsonify, g
+from app.services.sheets import sheets_service
+from app.utils.auth import auth_required, admin_required
+from app.utils.validation import validate_required_fields, validate_rating, validate_pagination
 
 bp = Blueprint('reviews', __name__)
 
 
+def update_book_rating(book_id):
+    """Recalculate and update book's average rating."""
+    reviews = sheets_service.find_by_field('reviews', 'book_id', book_id)
+    approved_reviews = [r for r in reviews if r.get('is_approved', True)]
+    
+    if approved_reviews:
+        total_rating = sum(r.get('rating', 0) for r in approved_reviews)
+        avg_rating = total_rating / len(approved_reviews)
+        sheets_service.update('books', book_id, {
+            'average_rating': round(avg_rating, 2),
+            'total_reviews': len(approved_reviews)
+        })
+    else:
+        sheets_service.update('books', book_id, {
+            'average_rating': 0,
+            'total_reviews': 0
+        })
+
+
 @bp.route('/book/<book_id>', methods=['GET'])
+@validate_pagination
 def get_book_reviews(book_id):
     """Get reviews for a book."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    page = request.pagination['page']
+    limit = request.pagination['limit']
     
-    pagination = get_pagination()
-    sort_by = request.args.get('sort_by', 'newest')
+    reviews = sheets_service.find_by_field('reviews', 'book_id', book_id)
+    approved_reviews = [r for r in reviews if r.get('is_approved', True)]
     
-    query = Review.query.filter_by(book_id=book_id, is_approved=True)
+    # Enrich with user info
+    users = {u['id']: u for u in sheets_service.get_all('users')}
+    for review in approved_reviews:
+        user = users.get(review.get('user_id'), {})
+        review['username'] = user.get('username')
+        review['display_name'] = user.get('display_name')
+        review['avatar_url'] = user.get('avatar_url')
     
-    if sort_by == 'rating_high':
-        query = query.order_by(Review.rating.desc(), Review.created_at.desc())
-    elif sort_by == 'rating_low':
-        query = query.order_by(Review.rating.asc(), Review.created_at.desc())
-    elif sort_by == 'helpful':
-        query = query.order_by(Review.helpful_count.desc(), Review.created_at.desc())
-    else:  # newest
-        query = query.order_by(Review.created_at.desc())
+    # Sort by created_at descending
+    approved_reviews.sort(key=lambda r: r.get('created_at', ''), reverse=True)
     
-    total = query.count()
-    reviews = query.offset(pagination['offset']).limit(pagination['limit']).all()
+    # Pagination
+    total = len(approved_reviews)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = approved_reviews[start:end]
     
-    # Get rating distribution
-    distribution = db.session.query(
-        Review.rating, func.count(Review.id)
-    ).filter_by(book_id=book_id, is_approved=True).group_by(Review.rating).all()
-    
-    rating_distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
-    for rating, count in distribution:
-        rating_distribution[rating] = count
+    # Rating distribution
+    distribution = {1: 0, 2: 0, 3: 0, 4: 0, 5: 0}
+    for review in approved_reviews:
+        rating = review.get('rating', 0)
+        if 1 <= rating <= 5:
+            distribution[rating] = distribution.get(rating, 0) + 1
     
     return jsonify({
-        'reviews': [r.to_dict() for r in reviews],
-        'rating_distribution': rating_distribution,
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
+        'results': paginated,
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'total_pages': (total + limit - 1) // limit if limit > 0 else 0,
+        'rating_distribution': distribution
     })
 
 
-@bp.route('/book/<book_id>', methods=['POST'])
-@authenticate
-def create_review(book_id):
-    """Create a review for a book."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
-    
-    user = get_current_user()
-    data = request.get_json() or {}
-    
-    rating = data.get('rating')
-    if not rating or not isinstance(rating, int) or rating < 1 or rating > 5:
-        return jsonify({'errors': ['คะแนนต้องอยู่ระหว่าง 1-5']}), 400
+@bp.route('', methods=['POST'])
+@auth_required
+@validate_required_fields(['book_id', 'rating'])
+@validate_rating
+def create_review():
+    """Create or update a review."""
+    data = request.get_json()
+    user_id = g.current_user['id']
+    book_id = data['book_id']
     
     # Check if book exists
-    book = Book.query.get(book_id)
+    book = sheets_service.get_by_id('books', book_id)
     if not book:
-        return jsonify({'error': 'Book not found', 'message': 'ไม่พบหนังสือ'}), 404
+        return jsonify({
+            'error': 'ไม่พบหนังสือ',
+            'error_en': 'Book not found'
+        }), 404
     
-    # Check if already reviewed
-    existing = Review.query.filter_by(user_id=user.id, book_id=book_id).first()
+    # Check for existing review
+    existing_reviews = sheets_service.find_by_field('reviews', 'user_id', user_id)
+    existing = next((r for r in existing_reviews if r.get('book_id') == book_id), None)
+    
     if existing:
-        return jsonify({'error': 'Already reviewed', 'message': 'คุณได้รีวิวหนังสือนี้แล้ว'}), 400
+        # Update existing review
+        update_data = {
+            'rating': data['rating'],
+            'content': data.get('content'),
+            'is_spoiler': data.get('is_spoiler', False)
+        }
+        review = sheets_service.update('reviews', existing['id'], update_data)
+    else:
+        # Create new review
+        review_data = {
+            'user_id': user_id,
+            'book_id': book_id,
+            'rating': data['rating'],
+            'content': data.get('content'),
+            'is_spoiler': data.get('is_spoiler', False),
+            'is_approved': True,
+            'helpful_count': 0
+        }
+        review = sheets_service.create('reviews', review_data)
     
-    review = Review(
-        user_id=user.id,
-        book_id=book_id,
-        rating=rating,
-        content=data.get('content'),
-        is_spoiler=data.get('is_spoiler', False)
-    )
+    if review:
+        update_book_rating(book_id)
+        return jsonify(review), 201 if not existing else 200
     
-    db.session.add(review)
-    
-    # Update book's average rating
-    _update_book_rating(book)
-    
-    db.session.commit()
-    
-    return jsonify({'review': review.to_dict(), 'message': 'เพิ่มรีวิวสำเร็จ'}), 201
+    return jsonify({
+        'error': 'ไม่สามารถบันทึกรีวิวได้',
+        'error_en': 'Could not save review'
+    }), 500
 
 
 @bp.route('/<review_id>', methods=['PUT'])
-@authenticate
+@auth_required
+@validate_rating
 def update_review(review_id):
-    """Update a review."""
-    if not validate_uuid(review_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Update own review."""
+    data = request.get_json()
+    user_id = g.current_user['id']
     
-    user = get_current_user()
-    review = Review.query.get(review_id)
-    
+    review = sheets_service.get_by_id('reviews', review_id)
     if not review:
-        return jsonify({'error': 'Review not found', 'message': 'ไม่พบรีวิว'}), 404
+        return jsonify({
+            'error': 'ไม่พบรีวิว',
+            'error_en': 'Review not found'
+        }), 404
     
-    if review.user_id != user.id and user.role != 'admin':
-        return jsonify({'error': 'Forbidden', 'message': 'คุณไม่มีสิทธิ์แก้ไขรีวิวนี้'}), 403
+    if review.get('user_id') != user_id:
+        return jsonify({
+            'error': 'ไม่มีสิทธิ์แก้ไขรีวิวนี้',
+            'error_en': 'Not authorized to edit this review'
+        }), 403
     
-    data = request.get_json() or {}
+    allowed_fields = ['rating', 'content', 'is_spoiler']
+    update_data = {k: v for k, v in data.items() if k in allowed_fields}
     
-    if 'rating' in data:
-        rating = data['rating']
-        if not isinstance(rating, int) or rating < 1 or rating > 5:
-            return jsonify({'errors': ['คะแนนต้องอยู่ระหว่าง 1-5']}), 400
-        review.rating = rating
+    updated = sheets_service.update('reviews', review_id, update_data)
     
-    if 'content' in data:
-        review.content = data['content']
+    if updated:
+        update_book_rating(review['book_id'])
+        return jsonify(updated)
     
-    if 'is_spoiler' in data:
-        review.is_spoiler = data['is_spoiler']
-    
-    # Update book's average rating
-    book = Book.query.get(review.book_id)
-    if book:
-        _update_book_rating(book)
-    
-    db.session.commit()
-    
-    return jsonify({'review': review.to_dict(), 'message': 'อัพเดทรีวิวสำเร็จ'})
+    return jsonify({
+        'error': 'ไม่สามารถอัพเดทรีวิวได้',
+        'error_en': 'Could not update review'
+    }), 500
 
 
 @bp.route('/<review_id>', methods=['DELETE'])
-@authenticate
+@auth_required
 def delete_review(review_id):
-    """Delete a review."""
-    if not validate_uuid(review_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Delete own review."""
+    user_id = g.current_user['id']
     
-    user = get_current_user()
-    review = Review.query.get(review_id)
-    
+    review = sheets_service.get_by_id('reviews', review_id)
     if not review:
-        return jsonify({'error': 'Review not found', 'message': 'ไม่พบรีวิว'}), 404
+        return jsonify({
+            'error': 'ไม่พบรีวิว',
+            'error_en': 'Review not found'
+        }), 404
     
-    if review.user_id != user.id and user.role != 'admin':
-        return jsonify({'error': 'Forbidden', 'message': 'คุณไม่มีสิทธิ์ลบรีวิวนี้'}), 403
+    # Allow user to delete own review or admin to delete any
+    if review.get('user_id') != user_id and g.current_user.get('role') not in ['admin', 'moderator']:
+        return jsonify({
+            'error': 'ไม่มีสิทธิ์ลบรีวิวนี้',
+            'error_en': 'Not authorized to delete this review'
+        }), 403
     
-    book_id = review.book_id
-    db.session.delete(review)
+    book_id = review['book_id']
     
-    # Update book's average rating
-    book = Book.query.get(book_id)
-    if book:
-        _update_book_rating(book)
-    
-    db.session.commit()
-    
-    return jsonify({'message': 'ลบรีวิวสำเร็จ'})
-
-
-@bp.route('/my-reviews', methods=['GET'])
-@authenticate
-def get_user_reviews():
-    """Get current user's reviews."""
-    user = get_current_user()
-    pagination = get_pagination()
-    
-    total = Review.query.filter_by(user_id=user.id).count()
-    reviews = Review.query.filter_by(user_id=user.id)\
-        .order_by(Review.created_at.desc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
-    
-    # Add book info to reviews
-    reviews_with_books = []
-    for review in reviews:
-        review_dict = review.to_dict()
-        if review.book:
-            review_dict['book_title'] = review.book.title
-            review_dict['book_title_thai'] = review.book.title_thai
-            review_dict['book_cover'] = review.book.cover_image_url
-        reviews_with_books.append(review_dict)
+    if sheets_service.delete('reviews', review_id):
+        update_book_rating(book_id)
+        return jsonify({'message': 'ลบรีวิวเรียบร้อยแล้ว', 'message_en': 'Review deleted successfully'})
     
     return jsonify({
-        'reviews': reviews_with_books,
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
-    })
+        'error': 'ไม่สามารถลบรีวิวได้',
+        'error_en': 'Could not delete review'
+    }), 500
 
 
 @bp.route('/<review_id>/helpful', methods=['POST'])
-@authenticate
+@auth_required
 def mark_helpful(review_id):
     """Mark a review as helpful."""
-    if not validate_uuid(review_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
-    
-    review = Review.query.get(review_id)
+    review = sheets_service.get_by_id('reviews', review_id)
     if not review:
-        return jsonify({'error': 'Review not found', 'message': 'ไม่พบรีวิว'}), 404
+        return jsonify({
+            'error': 'ไม่พบรีวิว',
+            'error_en': 'Review not found'
+        }), 404
     
-    review.helpful_count += 1
-    db.session.commit()
+    updated = sheets_service.update('reviews', review_id, {
+        'helpful_count': (review.get('helpful_count', 0) or 0) + 1
+    })
     
-    return jsonify({'review': review.to_dict(), 'message': 'ขอบคุณสำหรับความคิดเห็น'})
+    if updated:
+        return jsonify(updated)
+    
+    return jsonify({
+        'error': 'ไม่สามารถอัพเดทได้',
+        'error_en': 'Could not update'
+    }), 500
 
 
 @bp.route('/pending', methods=['GET'])
-@authenticate
-@require_moderator
+@admin_required
+@validate_pagination
 def get_pending_reviews():
-    """Moderator: Get pending reviews for moderation."""
-    pagination = get_pagination()
+    """Get pending reviews for moderation (admin only)."""
+    page = request.pagination['page']
+    limit = request.pagination['limit']
     
-    total = Review.query.filter_by(is_approved=False).count()
-    reviews = Review.query.filter_by(is_approved=False)\
-        .order_by(Review.created_at.asc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
+    reviews = sheets_service.get_all('reviews')
+    pending = [r for r in reviews if not r.get('is_approved', True)]
     
-    # Add book and user info
-    reviews_with_info = []
-    for review in reviews:
-        review_dict = review.to_dict()
-        if review.book:
-            review_dict['book_title'] = review.book.title
-            review_dict['book_title_thai'] = review.book.title_thai
-        reviews_with_info.append(review_dict)
+    # Pagination
+    total = len(pending)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = pending[start:end]
     
     return jsonify({
-        'reviews': reviews_with_info,
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
+        'results': paginated,
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'total_pages': (total + limit - 1) // limit if limit > 0 else 0
     })
 
 
-@bp.route('/<review_id>/moderate', methods=['PUT'])
-@authenticate
-@require_moderator
-def moderate_review(review_id):
-    """Moderator: Approve or reject a review."""
-    if not validate_uuid(review_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
-    
-    data = request.get_json() or {}
-    is_approved = data.get('is_approved', False)
-    
-    review = Review.query.get(review_id)
+@bp.route('/<review_id>/approve', methods=['POST'])
+@admin_required
+def approve_review(review_id):
+    """Approve a review (admin only)."""
+    review = sheets_service.get_by_id('reviews', review_id)
     if not review:
-        return jsonify({'error': 'Review not found', 'message': 'ไม่พบรีวิว'}), 404
+        return jsonify({
+            'error': 'ไม่พบรีวิว',
+            'error_en': 'Review not found'
+        }), 404
     
-    review.is_approved = is_approved
+    updated = sheets_service.update('reviews', review_id, {'is_approved': True})
     
-    # Update book's stats
-    book = Book.query.get(review.book_id)
-    if book:
-        _update_book_rating(book)
+    if updated:
+        update_book_rating(review['book_id'])
+        return jsonify(updated)
     
-    db.session.commit()
-    
-    message = 'อนุมัติรีวิวสำเร็จ' if is_approved else 'ปฏิเสธรีวิวสำเร็จ'
-    return jsonify({'review': review.to_dict(), 'message': message})
+    return jsonify({
+        'error': 'ไม่สามารถอนุมัติรีวิวได้',
+        'error_en': 'Could not approve review'
+    }), 500
 
 
-def _update_book_rating(book):
-    """Helper to update a book's average rating and total reviews."""
-    reviews = Review.query.filter_by(book_id=book.id, is_approved=True).all()
-    book.total_reviews = len(reviews)
-    if reviews:
-        book.average_rating = sum(r.rating for r in reviews) / len(reviews)
-    else:
-        book.average_rating = 0
+@bp.route('/<review_id>/reject', methods=['POST'])
+@admin_required
+def reject_review(review_id):
+    """Reject a review (admin only)."""
+    review = sheets_service.get_by_id('reviews', review_id)
+    if not review:
+        return jsonify({
+            'error': 'ไม่พบรีวิว',
+            'error_en': 'Review not found'
+        }), 404
+    
+    updated = sheets_service.update('reviews', review_id, {'is_approved': False})
+    
+    if updated:
+        update_book_rating(review['book_id'])
+        return jsonify(updated)
+    
+    return jsonify({
+        'error': 'ไม่สามารถปฏิเสธรีวิวได้',
+        'error_en': 'Could not reject review'
+    }), 500

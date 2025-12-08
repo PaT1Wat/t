@@ -1,6 +1,6 @@
 # MangaRec - ระบบแนะนำมังงะและนิยาย
 
-ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย **Python** + AI ที่เข้าใจรสนิยมของผู้ใช้
+ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย **Python Backend** + **React Frontend** + **Google Sheets** สำหรับจัดเก็บข้อมูล
 
 ## 🌟 Features
 
@@ -28,25 +28,25 @@
 
 ### Backend (Python)
 - **Flask** - Web Framework
-- **Flask-SQLAlchemy** - ORM for PostgreSQL
-- **PostgreSQL** - Database
+- **Google Sheets API** - Data Storage (gspread)
 - **Firebase Admin SDK** - Authentication
 - **scikit-learn** - TF-IDF, Cosine Similarity, KNN, SVD
 - **pandas/numpy** - Data Processing
 
-### Frontend (Python + HTML/JS)
-- **Flask** - Web Templates
+### Frontend (React + JavaScript + CSS)
+- **React 18** - UI Library
+- **React Router** - Navigation
 - **TailwindCSS** - Styling (via CDN)
-- **Vanilla JavaScript** - Interactivity
+- **Axios** - HTTP Client
+- **Firebase SDK** - Authentication
 
 ## 📁 Project Structure
 
 ```
 ├── backend/
 │   ├── app/
-│   │   ├── models/           # SQLAlchemy models
 │   │   ├── routes/           # API route blueprints
-│   │   ├── services/         # Recommendation & Search services
+│   │   ├── services/         # Google Sheets, Recommendation & Search
 │   │   ├── utils/            # Auth & Validation helpers
 │   │   └── __init__.py       # Flask app factory
 │   ├── tests/                # pytest tests
@@ -54,23 +54,35 @@
 │   └── run.py                # Entry point
 │
 └── frontend/
-    ├── templates/            # Jinja2 templates
-    │   ├── base.html
-    │   ├── home.html
-    │   ├── search.html
-    │   ├── book_detail.html
-    │   └── ...
-    ├── static/               # CSS & JS files
-    ├── requirements.txt
-    └── app.py                # Frontend Flask app
+    ├── public/               # Static assets
+    ├── src/
+    │   ├── components/       # React components
+    │   ├── pages/            # Page components
+    │   ├── services/         # API & Firebase services
+    │   ├── context/          # Auth context
+    │   ├── styles/           # CSS styles
+    │   └── App.js            # Main app component
+    ├── package.json
+    └── .env.example
 ```
 
 ## 🚀 Getting Started
 
 ### Prerequisites
 - Python 3.9+
-- PostgreSQL 14+
+- Node.js 18+ & npm
+- Google Cloud Project with Sheets API enabled
 - Firebase Project (for authentication)
+
+### Google Sheets Setup
+
+1. Create a new Google Spreadsheet
+2. Enable Google Sheets API in Google Cloud Console
+3. Create a Service Account and download JSON credentials
+4. Share the spreadsheet with the service account email
+
+The system will automatically create these sheets:
+- Users, Books, Authors, Publishers, Reviews, Favorites, SearchHistory, ReadingHistory
 
 ### Backend Setup
 
@@ -98,9 +110,18 @@ cp .env.example .env
 
 5. Configure environment variables:
 ```env
-DATABASE_URL=postgresql://user:password@localhost:5432/manga_recommendation
-FIREBASE_PROJECT_ID=your-firebase-project-id
+# Google Sheets
+GOOGLE_CREDENTIALS_JSON={"type":"service_account",...}
+# Or use file path:
+GOOGLE_CREDENTIALS_FILE=./credentials.json
+GOOGLE_SPREADSHEET_ID=your-spreadsheet-id
+
+# Firebase
+FIREBASE_CREDENTIALS_JSON={"type":"service_account",...}
+
+# App
 SECRET_KEY=your-secret-key
+CORS_ORIGINS=http://localhost:3000
 ```
 
 6. Run the server:
@@ -117,20 +138,26 @@ The API will be available at `http://localhost:5000`
 cd frontend
 ```
 
-2. Create virtual environment:
+2. Install dependencies:
 ```bash
-python -m venv venv
-source venv/bin/activate
+npm install
 ```
 
-3. Install dependencies:
+3. Create `.env` file from example:
 ```bash
-pip install -r requirements.txt
+cp .env.example .env
 ```
 
-4. Run the frontend:
+4. Configure Firebase:
+```env
+REACT_APP_FIREBASE_API_KEY=your-api-key
+REACT_APP_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
+REACT_APP_FIREBASE_PROJECT_ID=your-project-id
+```
+
+5. Run the development server:
 ```bash
-python app.py
+npm start
 ```
 
 The web UI will be available at `http://localhost:3000`
@@ -138,52 +165,52 @@ The web UI will be available at `http://localhost:3000`
 ## 📡 API Endpoints
 
 ### Authentication
-- `POST /api/users/register` - Register new user
-- `GET /api/users/profile` - Get user profile
-- `PUT /api/users/profile` - Update profile
+- `GET /api/users/me` - Get current user profile
+- `PUT /api/users/me` - Update profile
 
 ### Books
 - `GET /api/books` - List all books
 - `GET /api/books/<id>` - Get book details
-- `GET /api/books/type/<type>` - Get books by type
-- `GET /api/books/top-rated` - Get top rated books
-- `GET /api/books/recent` - Get recently added books
+- `GET /api/books/<id>/similar` - Get similar books
+- `GET /api/books/recommendations` - Personalized recommendations
+- `POST /api/books` - Create book (admin)
+- `PUT /api/books/<id>` - Update book (admin)
+- `DELETE /api/books/<id>` - Delete book (admin)
 
-### Search & Recommendations
-- `GET /api/search/` - Search books with filters
-- `GET /api/search/autocomplete` - Autocomplete suggestions
-- `GET /api/search/recommendations` - Personalized recommendations
-- `GET /api/search/similar/<book_id>` - Similar books
-- `GET /api/search/filters` - Available filter options
+### Search
+- `GET /api/search?q=query` - Search books with filters
+- `GET /api/search/autocomplete?q=query` - Autocomplete suggestions
+- `GET /api/search/genres` - Available genres
+- `GET /api/search/tags` - Available tags
 
 ### Reviews
 - `GET /api/reviews/book/<book_id>` - Get book reviews
-- `POST /api/reviews/book/<book_id>` - Create review
-- `PUT /api/reviews/<review_id>` - Update review
-- `DELETE /api/reviews/<review_id>` - Delete review
+- `POST /api/reviews` - Create review
+- `PUT /api/reviews/<id>` - Update review
+- `DELETE /api/reviews/<id>` - Delete review
 
 ### Favorites
 - `GET /api/favorites` - Get user favorites
-- `POST /api/favorites/<book_id>` - Add to favorites
+- `POST /api/favorites` - Add to favorites
 - `DELETE /api/favorites/<book_id>` - Remove from favorites
 
-## 🗄️ Database Schema
+## 🗄️ Data Schema (Google Sheets)
 
-### Tables (SQLAlchemy Models)
-- **users** - User accounts
-- **books** - Book information
-- **authors** - Author information
-- **publishers** - Publisher information
-- **reviews** - User reviews and ratings
-- **favorites** - User favorite books
-- **search_history** - Search history for recommendations
-- **reading_history** - Reading behavior tracking
+### Sheets
+- **Users** - User accounts (id, firebase_uid, email, username, display_name, role, ...)
+- **Books** - Book information (id, title, title_thai, description, type, status, genres, tags, ...)
+- **Authors** - Author information (id, name, name_thai, bio, ...)
+- **Publishers** - Publisher information
+- **Reviews** - User reviews and ratings
+- **Favorites** - User favorite books
+- **SearchHistory** - Search history for recommendations
+- **ReadingHistory** - Reading behavior tracking
 
 ## 🌐 Thai Language Support
 
 - Full-text search supports Thai characters
 - All UI text in Thai
-- Thai fonts (Sarabun) for better readability
+- Thai fonts (Noto Sans Thai) for better readability
 - Dual language support for book titles and descriptions
 
 ## 🧪 Testing
@@ -193,6 +220,10 @@ The web UI will be available at `http://localhost:3000`
 cd backend
 pip install pytest
 pytest
+
+# Frontend tests
+cd frontend
+npm test
 ```
 
 ## 📝 License

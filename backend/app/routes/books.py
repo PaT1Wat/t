@@ -1,206 +1,210 @@
-"""Book routes for CRUD operations."""
+"""
+Book routes for CRUD operations.
+"""
 
-from flask import Blueprint, request, jsonify
-from app.models import Book, ReadingHistory
-from app import db
-from app.utils import authenticate, optional_auth, require_admin, get_current_user, get_pagination, validate_uuid
-from app.services import recommendation_service
+from flask import Blueprint, request, jsonify, g
+from app.services.sheets import sheets_service
+from app.services.recommendation import recommendation_service
+from app.utils.auth import auth_required, auth_optional, admin_required
+from app.utils.validation import validate_required_fields, validate_pagination
 
 bp = Blueprint('books', __name__)
 
 
-@bp.route('/', methods=['GET'])
-def get_all_books():
+@bp.route('', methods=['GET'])
+@validate_pagination
+def get_books():
     """Get all books with pagination."""
-    pagination = get_pagination()
+    page = request.pagination['page']
+    limit = request.pagination['limit']
     
-    total = Book.query.count()
-    books = Book.query.order_by(Book.created_at.desc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
+    books = sheets_service.get_all('books')
+    authors = {a['id']: a for a in sheets_service.get_all('authors')}
+    publishers = {p['id']: p for p in sheets_service.get_all('publishers')}
+    
+    # Enrich with author/publisher info
+    for book in books:
+        author = authors.get(book.get('author_id'), {})
+        publisher = publishers.get(book.get('publisher_id'), {})
+        book['author_name'] = author.get('name')
+        book['author_name_thai'] = author.get('name_thai')
+        book['publisher_name'] = publisher.get('name')
+        book['publisher_name_thai'] = publisher.get('name_thai')
+    
+    # Pagination
+    total = len(books)
+    start = (page - 1) * limit
+    end = start + limit
+    paginated = books[start:end]
     
     return jsonify({
-        'books': [b.to_dict() for b in books],
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
+        'results': paginated,
+        'total': total,
+        'page': page,
+        'limit': limit,
+        'total_pages': (total + limit - 1) // limit if limit > 0 else 0
     })
 
 
 @bp.route('/<book_id>', methods=['GET'])
-@optional_auth
+@auth_optional
 def get_book(book_id):
-    """Get a single book by ID."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Get book by ID."""
+    book = sheets_service.get_by_id('books', book_id)
     
-    book = Book.query.get(book_id)
     if not book:
-        return jsonify({'error': 'Book not found', 'message': 'ไม่พบหนังสือ'}), 404
+        return jsonify({
+            'error': 'ไม่พบหนังสือ',
+            'error_en': 'Book not found'
+        }), 404
     
-    # Track viewing for logged-in users
-    user = get_current_user()
-    if user:
-        history = ReadingHistory.query.filter_by(user_id=user.id, book_id=book_id).first()
-        if history:
-            history.view_count += 1
+    # Enrich with author/publisher
+    if book.get('author_id'):
+        author = sheets_service.get_by_id('authors', book['author_id'])
+        if author:
+            book['author'] = author
+            book['author_name'] = author.get('name')
+            book['author_name_thai'] = author.get('name_thai')
+    
+    if book.get('publisher_id'):
+        publisher = sheets_service.get_by_id('publishers', book['publisher_id'])
+        if publisher:
+            book['publisher'] = publisher
+            book['publisher_name'] = publisher.get('name')
+            book['publisher_name_thai'] = publisher.get('name_thai')
+    
+    # Get reviews
+    reviews = sheets_service.find_by_field('reviews', 'book_id', book_id)
+    approved_reviews = [r for r in reviews if r.get('is_approved', True)]
+    book['reviews'] = approved_reviews[:10]  # Last 10 reviews
+    
+    # Record reading history if user is logged in
+    if g.current_user:
+        user_id = g.current_user['id']
+        history = sheets_service.find_by_field('reading_history', 'user_id', user_id)
+        existing = next((h for h in history if h.get('book_id') == book_id), None)
+        
+        if existing:
+            sheets_service.update('reading_history', existing['id'], {
+                'view_count': (existing.get('view_count', 0) or 0) + 1
+            })
         else:
-            history = ReadingHistory(user_id=user.id, book_id=book_id)
-            db.session.add(history)
-        db.session.commit()
+            sheets_service.create('reading_history', {
+                'user_id': user_id,
+                'book_id': book_id,
+                'view_count': 1
+            })
     
-    # Get similar books
-    similar_books = recommendation_service.get_content_based_recommendations(book_id, 6)
-    
-    return jsonify({
-        'book': book.to_dict(),
-        'similar_books': similar_books
-    })
+    return jsonify(book)
 
 
-@bp.route('/type/<book_type>', methods=['GET'])
-def get_books_by_type(book_type):
-    """Get books by type."""
-    valid_types = ['manga', 'novel', 'light_novel', 'webtoon']
-    if book_type not in valid_types:
-        return jsonify({'error': 'Invalid type', 'message': 'ประเภทหนังสือไม่ถูกต้อง'}), 400
-    
-    pagination = get_pagination()
-    
-    total = Book.query.filter_by(type=book_type).count()
-    books = Book.query.filter_by(type=book_type)\
-        .order_by(Book.created_at.desc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
-    
-    return jsonify({
-        'books': [b.to_dict() for b in books],
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
-    })
-
-
-@bp.route('/top-rated', methods=['GET'])
-def get_top_rated():
-    """Get top rated books."""
-    limit = min(50, int(request.args.get('limit', 10)))
-    
-    books = Book.query.filter(Book.total_reviews >= 5)\
-        .order_by(Book.average_rating.desc(), Book.total_reviews.desc())\
-        .limit(limit)\
-        .all()
-    
-    return jsonify({'books': [b.to_dict() for b in books]})
-
-
-@bp.route('/recent', methods=['GET'])
-def get_recent():
-    """Get recently added books."""
-    limit = min(50, int(request.args.get('limit', 10)))
-    
-    books = Book.query.order_by(Book.created_at.desc()).limit(limit).all()
-    
-    return jsonify({'books': [b.to_dict() for b in books]})
-
-
-@bp.route('/', methods=['POST'])
-@authenticate
-@require_admin
+@bp.route('', methods=['POST'])
+@admin_required
+@validate_required_fields(['title'])
 def create_book():
-    """Admin: Create a new book."""
-    data = request.get_json() or {}
+    """Create a new book (admin only)."""
+    data = request.get_json()
     
-    title = data.get('title')
-    if not title:
-        return jsonify({'errors': ['ต้องระบุชื่อหนังสือ']}), 400
+    book_data = {
+        'title': data['title'],
+        'title_thai': data.get('title_thai'),
+        'description': data.get('description'),
+        'description_thai': data.get('description_thai'),
+        'cover_image_url': data.get('cover_image_url'),
+        'type': data.get('type', 'manga'),
+        'status': data.get('status', 'ongoing'),
+        'publication_year': data.get('publication_year'),
+        'total_chapters': data.get('total_chapters'),
+        'total_volumes': data.get('total_volumes'),
+        'author_id': data.get('author_id'),
+        'publisher_id': data.get('publisher_id'),
+        'average_rating': 0,
+        'total_reviews': 0,
+        'tags': data.get('tags', []),
+        'genres': data.get('genres', []),
+        'is_nsfw': data.get('is_nsfw', False)
+    }
     
-    book = Book(
-        title=title,
-        title_thai=data.get('title_thai'),
-        description=data.get('description'),
-        description_thai=data.get('description_thai'),
-        cover_image_url=data.get('cover_image_url'),
-        type=data.get('type'),
-        status=data.get('status', 'ongoing'),
-        publication_year=data.get('publication_year'),
-        total_chapters=data.get('total_chapters'),
-        total_volumes=data.get('total_volumes'),
-        author_id=data.get('author_id'),
-        publisher_id=data.get('publisher_id'),
-        tags=data.get('tags', []),
-        genres=data.get('genres', []),
-        is_nsfw=data.get('is_nsfw', False)
-    )
+    book = sheets_service.create('books', book_data)
     
-    db.session.add(book)
-    db.session.commit()
+    if book:
+        return jsonify(book), 201
     
-    return jsonify({'book': book.to_dict(), 'message': 'เพิ่มหนังสือสำเร็จ'}), 201
+    return jsonify({
+        'error': 'ไม่สามารถสร้างหนังสือได้',
+        'error_en': 'Could not create book'
+    }), 500
 
 
 @bp.route('/<book_id>', methods=['PUT'])
-@authenticate
-@require_admin
+@admin_required
 def update_book(book_id):
-    """Admin: Update a book."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Update a book (admin only)."""
+    data = request.get_json()
     
-    book = Book.query.get(book_id)
-    if not book:
-        return jsonify({'error': 'Book not found', 'message': 'ไม่พบหนังสือ'}), 404
+    existing = sheets_service.get_by_id('books', book_id)
+    if not existing:
+        return jsonify({
+            'error': 'ไม่พบหนังสือ',
+            'error_en': 'Book not found'
+        }), 404
     
-    data = request.get_json() or {}
+    allowed_fields = [
+        'title', 'title_thai', 'description', 'description_thai',
+        'cover_image_url', 'type', 'status', 'publication_year',
+        'total_chapters', 'total_volumes', 'author_id', 'publisher_id',
+        'tags', 'genres', 'is_nsfw'
+    ]
+    update_data = {k: v for k, v in data.items() if k in allowed_fields}
     
-    field_mappings = {
-        'title': 'title',
-        'title_thai': 'title_thai',
-        'description': 'description',
-        'description_thai': 'description_thai',
-        'cover_image_url': 'cover_image_url',
-        'type': 'type',
-        'status': 'status',
-        'publication_year': 'publication_year',
-        'total_chapters': 'total_chapters',
-        'total_volumes': 'total_volumes',
-        'author_id': 'author_id',
-        'publisher_id': 'publisher_id',
-        'tags': 'tags',
-        'genres': 'genres',
-        'is_nsfw': 'is_nsfw'
-    }
+    updated = sheets_service.update('books', book_id, update_data)
     
-    for key, attr in field_mappings.items():
-        if key in data:
-            setattr(book, attr, data[key])
+    if updated:
+        return jsonify(updated)
     
-    db.session.commit()
-    
-    return jsonify({'book': book.to_dict(), 'message': 'อัพเดทหนังสือสำเร็จ'})
+    return jsonify({
+        'error': 'ไม่สามารถอัพเดทหนังสือได้',
+        'error_en': 'Could not update book'
+    }), 500
 
 
 @bp.route('/<book_id>', methods=['DELETE'])
-@authenticate
-@require_admin
+@admin_required
 def delete_book(book_id):
-    """Admin: Delete a book."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
+    """Delete a book (admin only)."""
+    existing = sheets_service.get_by_id('books', book_id)
+    if not existing:
+        return jsonify({
+            'error': 'ไม่พบหนังสือ',
+            'error_en': 'Book not found'
+        }), 404
     
-    book = Book.query.get(book_id)
-    if not book:
-        return jsonify({'error': 'Book not found', 'message': 'ไม่พบหนังสือ'}), 404
+    if sheets_service.delete('books', book_id):
+        return jsonify({'message': 'ลบหนังสือเรียบร้อยแล้ว', 'message_en': 'Book deleted successfully'})
     
-    db.session.delete(book)
-    db.session.commit()
+    return jsonify({
+        'error': 'ไม่สามารถลบหนังสือได้',
+        'error_en': 'Could not delete book'
+    }), 500
+
+
+@bp.route('/<book_id>/similar', methods=['GET'])
+def get_similar_books(book_id):
+    """Get similar books using content-based recommendations."""
+    limit = request.args.get('limit', 10, type=int)
     
-    return jsonify({'message': 'ลบหนังสือสำเร็จ'})
+    similar = recommendation_service.get_content_based_recommendations(book_id, limit)
+    
+    return jsonify(similar)
+
+
+@bp.route('/recommendations', methods=['GET'])
+@auth_optional
+def get_recommendations():
+    """Get personalized recommendations."""
+    limit = request.args.get('limit', 20, type=int)
+    user_id = g.current_user['id'] if g.current_user else None
+    
+    recommendations = recommendation_service.get_recommendations(user_id, limit)
+    
+    return jsonify(recommendations)

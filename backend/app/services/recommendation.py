@@ -1,6 +1,7 @@
 """
 Recommendation Service using TF-IDF, Cosine Similarity, KNN, and SVD.
 Implements hybrid recommendation combining content-based and collaborative filtering.
+Uses Google Sheets as data source.
 """
 
 import numpy as np
@@ -8,8 +9,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from sklearn.metrics.pairwise import cosine_similarity
 from sklearn.neighbors import NearestNeighbors
 from sklearn.decomposition import TruncatedSVD
-from app.models import Book, Review, Favorite, ReadingHistory
-from app import db
+from app.services.sheets import sheets_service
 
 
 class RecommendationService:
@@ -24,34 +24,69 @@ class RecommendationService:
         self.svd_model = None
         self.knn_model = None
         self.last_update = None
+        self.authors_cache = {}
+        self.publishers_cache = {}
     
     def initialize(self):
         """Initialize or refresh the recommendation models."""
         # Load all books
-        books = Book.query.all()
+        books = sheets_service.get_all('books')
         self.books_data = books
-        self.book_id_to_idx = {book.id: idx for idx, book in enumerate(books)}
+        self.book_id_to_idx = {book['id']: idx for idx, book in enumerate(books)}
+        
+        # Load authors and publishers for enrichment
+        authors = sheets_service.get_all('authors')
+        publishers = sheets_service.get_all('publishers')
+        self.authors_cache = {a['id']: a for a in authors}
+        self.publishers_cache = {p['id']: p for p in publishers}
         
         if len(books) > 0:
             self._build_tfidf_model()
             self._build_collaborative_model()
+    
+    def _enrich_book(self, book):
+        """Add author and publisher info to book."""
+        book_copy = dict(book)
+        author_id = book.get('author_id')
+        publisher_id = book.get('publisher_id')
+        
+        if author_id and author_id in self.authors_cache:
+            author = self.authors_cache[author_id]
+            book_copy['author_name'] = author.get('name')
+            book_copy['author_name_thai'] = author.get('name_thai')
+        else:
+            book_copy['author_name'] = None
+            book_copy['author_name_thai'] = None
+            
+        if publisher_id and publisher_id in self.publishers_cache:
+            publisher = self.publishers_cache[publisher_id]
+            book_copy['publisher_name'] = publisher.get('name')
+            book_copy['publisher_name_thai'] = publisher.get('name_thai')
+        else:
+            book_copy['publisher_name'] = None
+            book_copy['publisher_name_thai'] = None
+        
+        return book_copy
     
     def _build_tfidf_model(self):
         """Build TF-IDF model for content-based filtering."""
         # Create text corpus from book metadata
         corpus = []
         for book in self.books_data:
+            author_id = book.get('author_id')
+            author = self.authors_cache.get(author_id, {})
+            
             text_parts = [
-                book.title or '',
-                book.title_thai or '',
-                book.description or '',
-                book.description_thai or '',
-                book.type or '',
-                ' '.join(book.tags or []),
-                ' '.join(book.genres or [])
+                book.get('title') or '',
+                book.get('title_thai') or '',
+                book.get('description') or '',
+                book.get('description_thai') or '',
+                book.get('type') or '',
+                ' '.join(book.get('tags') or []),
+                ' '.join(book.get('genres') or []),
+                author.get('name') or '',
+                author.get('name_thai') or ''
             ]
-            if book.author:
-                text_parts.extend([book.author.name or '', book.author.name_thai or ''])
             corpus.append(' '.join(text_parts).lower())
         
         # Build TF-IDF vectorizer
@@ -64,10 +99,10 @@ class RecommendationService:
     
     def _build_collaborative_model(self):
         """Build collaborative filtering model using user-item interactions."""
-        # Get all user interactions (reviews, favorites, reading history)
-        reviews = Review.query.all()
-        favorites = Favorite.query.all()
-        history = ReadingHistory.query.all()
+        # Get all user interactions
+        reviews = sheets_service.get_all('reviews')
+        favorites = sheets_service.get_all('favorites')
+        history = sheets_service.get_all('reading_history')
         
         if not reviews and not favorites and not history:
             return
@@ -75,14 +110,14 @@ class RecommendationService:
         # Collect all users and books
         user_ids = set()
         for r in reviews:
-            user_ids.add(r.user_id)
+            user_ids.add(r.get('user_id'))
         for f in favorites:
-            user_ids.add(f.user_id)
+            user_ids.add(f.get('user_id'))
         for h in history:
-            user_ids.add(h.user_id)
+            user_ids.add(h.get('user_id'))
         
-        user_ids = list(user_ids)
-        book_ids = [b.id for b in self.books_data]
+        user_ids = list(filter(None, user_ids))
+        book_ids = [b['id'] for b in self.books_data]
         
         if len(user_ids) == 0 or len(book_ids) == 0:
             return
@@ -97,26 +132,34 @@ class RecommendationService:
         
         # Fill with ratings
         for review in reviews:
-            if review.user_id in user_to_idx and review.book_id in book_to_idx:
-                u_idx = user_to_idx[review.user_id]
-                b_idx = book_to_idx[review.book_id]
-                self.user_item_matrix[u_idx, b_idx] = review.rating
+            user_id = review.get('user_id')
+            book_id = review.get('book_id')
+            rating = review.get('rating', 0)
+            if user_id in user_to_idx and book_id in book_to_idx:
+                u_idx = user_to_idx[user_id]
+                b_idx = book_to_idx[book_id]
+                self.user_item_matrix[u_idx, b_idx] = rating
         
         # Fill with favorites (implicit rating of 4)
         for fav in favorites:
-            if fav.user_id in user_to_idx and fav.book_id in book_to_idx:
-                u_idx = user_to_idx[fav.user_id]
-                b_idx = book_to_idx[fav.book_id]
+            user_id = fav.get('user_id')
+            book_id = fav.get('book_id')
+            if user_id in user_to_idx and book_id in book_to_idx:
+                u_idx = user_to_idx[user_id]
+                b_idx = book_to_idx[book_id]
                 if self.user_item_matrix[u_idx, b_idx] == 0:
                     self.user_item_matrix[u_idx, b_idx] = 4
         
         # Fill with reading history (implicit rating based on view count)
         for hist in history:
-            if hist.user_id in user_to_idx and hist.book_id in book_to_idx:
-                u_idx = user_to_idx[hist.user_id]
-                b_idx = book_to_idx[hist.book_id]
+            user_id = hist.get('user_id')
+            book_id = hist.get('book_id')
+            view_count = hist.get('view_count', 1)
+            if user_id in user_to_idx and book_id in book_to_idx:
+                u_idx = user_to_idx[user_id]
+                b_idx = book_to_idx[book_id]
                 if self.user_item_matrix[u_idx, b_idx] == 0:
-                    self.user_item_matrix[u_idx, b_idx] = min(hist.view_count, 3)
+                    self.user_item_matrix[u_idx, b_idx] = min(view_count, 3)
         
         self.user_idx_to_id = {idx: uid for uid, idx in user_to_idx.items()}
         self.book_idx_to_id = {idx: bid for bid, idx in book_to_idx.items()}
@@ -153,11 +196,10 @@ class RecommendationService:
         recommendations = []
         for idx in similar_indices:
             if similarities[idx] > 0:
-                book = self.books_data[idx]
-                book_dict = book.to_dict()
-                book_dict['similarity_score'] = float(similarities[idx])
-                book_dict['recommendation_type'] = 'content_based'
-                recommendations.append(book_dict)
+                book = self._enrich_book(self.books_data[idx])
+                book['similarity_score'] = float(similarities[idx])
+                book['recommendation_type'] = 'content_based'
+                recommendations.append(book)
         
         return recommendations
     
@@ -165,6 +207,7 @@ class RecommendationService:
         """Get collaborative filtering recommendations using KNN and SVD."""
         if (self.user_item_matrix is None or 
             self.knn_model is None or 
+            not hasattr(self, 'user_id_to_idx') or
             user_id not in self.user_id_to_idx):
             return []
         
@@ -204,12 +247,12 @@ class RecommendationService:
         # Get book details
         recommendations = []
         for pred in predictions[:limit]:
-            book = Book.query.get(pred['book_id'])
+            book = sheets_service.get_by_id('books', pred['book_id'])
             if book:
-                book_dict = book.to_dict()
-                book_dict['predicted_rating'] = pred['predicted_rating']
-                book_dict['recommendation_type'] = 'collaborative'
-                recommendations.append(book_dict)
+                book = self._enrich_book(book)
+                book['predicted_rating'] = pred['predicted_rating']
+                book['recommendation_type'] = 'collaborative'
+                recommendations.append(book)
         
         return recommendations
     
@@ -221,11 +264,17 @@ class RecommendationService:
         collaborative = []
         
         # Get user's interacted books for content-based recommendations
-        user_books = db.session.query(Favorite.book_id).filter_by(user_id=user_id).all()
-        user_books += db.session.query(Review.book_id).filter_by(user_id=user_id).filter(Review.rating >= 4).all()
-        user_books += db.session.query(ReadingHistory.book_id).filter_by(user_id=user_id).limit(5).all()
+        favorites = sheets_service.find_by_field('favorites', 'user_id', user_id)
+        reviews = [r for r in sheets_service.find_by_field('reviews', 'user_id', user_id) if r.get('rating', 0) >= 4]
+        history = sheets_service.find_by_field('reading_history', 'user_id', user_id)[:5]
         
-        user_book_ids = set(b[0] for b in user_books)
+        user_book_ids = set()
+        for f in favorites:
+            user_book_ids.add(f.get('book_id'))
+        for r in reviews:
+            user_book_ids.add(r.get('book_id'))
+        for h in history:
+            user_book_ids.add(h.get('book_id'))
         
         # Get content-based recommendations from user's books
         for book_id in list(user_book_ids)[:5]:
@@ -259,12 +308,23 @@ class RecommendationService:
     
     def get_popular_recommendations(self, limit: int = 20) -> list:
         """Get popular books as fallback recommendations."""
-        books = Book.query.order_by(
-            (Book.average_rating * 0.4 + Book.total_reviews * 0.01).desc(),
-            Book.created_at.desc()
-        ).limit(limit).all()
+        books = sheets_service.get_all('books')
         
-        return [{**book.to_dict(), 'recommendation_type': 'popular'} for book in books]
+        # Sort by rating and reviews
+        def score(book):
+            rating = book.get('average_rating', 0) or 0
+            reviews = book.get('total_reviews', 0) or 0
+            return rating * 0.4 + reviews * 0.01
+        
+        sorted_books = sorted(books, key=score, reverse=True)
+        
+        result = []
+        for book in sorted_books[:limit]:
+            enriched = self._enrich_book(book)
+            enriched['recommendation_type'] = 'popular'
+            result.append(enriched)
+        
+        return result
     
     def get_recommendations(self, user_id: str = None, limit: int = 20) -> list:
         """Get personalized recommendations for a user."""

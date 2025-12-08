@@ -1,124 +1,65 @@
-"""Validation utilities."""
+"""
+Validation utilities for request data.
+"""
 
-import re
 from functools import wraps
 from flask import request, jsonify
 
 
-def validate_uuid(value):
-    """Check if string is a valid UUID."""
-    uuid_pattern = re.compile(
-        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
-        re.IGNORECASE
-    )
-    return bool(uuid_pattern.match(value)) if value else False
+def validate_required_fields(fields):
+    """Decorator to validate required fields in request JSON."""
+    def decorator(f):
+        @wraps(f)
+        def decorated(*args, **kwargs):
+            data = request.get_json()
+            if not data:
+                return jsonify({
+                    'error': 'กรุณาส่งข้อมูล JSON',
+                    'error_en': 'JSON body required'
+                }), 400
+            
+            missing = [field for field in fields if field not in data or data[field] is None]
+            if missing:
+                return jsonify({
+                    'error': f'ข้อมูลไม่ครบถ้วน: {", ".join(missing)}',
+                    'error_en': f'Missing required fields: {", ".join(missing)}'
+                }), 400
+            
+            return f(*args, **kwargs)
+        return decorated
+    return decorator
 
 
-def get_pagination():
-    """Get pagination parameters from request."""
-    try:
-        page = max(1, int(request.args.get('page', 1)))
-        limit = min(100, max(1, int(request.args.get('limit', 20))))
-    except (ValueError, TypeError):
-        page = 1
-        limit = 20
-    
-    return {
-        'page': page,
-        'limit': limit,
-        'offset': (page - 1) * limit
-    }
-
-
-def validate_book_data(f):
-    """Decorator to validate book creation/update data."""
+def validate_rating(f):
+    """Decorator to validate rating value."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        data = request.get_json() or {}
-        errors = []
-        
-        title = data.get('title')
-        if not title or not isinstance(title, str) or not title.strip():
-            errors.append('ต้องระบุชื่อหนังสือ (title)')
-        
-        if title and len(title) > 500:
-            errors.append('ชื่อหนังสือต้องไม่เกิน 500 ตัวอักษร')
-        
-        book_type = data.get('type')
-        valid_types = ['manga', 'novel', 'light_novel', 'webtoon']
-        if book_type and book_type not in valid_types:
-            errors.append('ประเภทหนังสือไม่ถูกต้อง')
-        
-        if errors:
-            return jsonify({'errors': errors}), 400
-        
+        data = request.get_json()
+        if data and 'rating' in data:
+            rating = data['rating']
+            if not isinstance(rating, (int, float)) or rating < 1 or rating > 5:
+                return jsonify({
+                    'error': 'คะแนนต้องอยู่ระหว่าง 1-5',
+                    'error_en': 'Rating must be between 1 and 5'
+                }), 400
         return f(*args, **kwargs)
-    
     return decorated
 
 
-def validate_review_data(f):
-    """Decorator to validate review creation/update data."""
+def validate_pagination(f):
+    """Decorator to validate pagination parameters."""
     @wraps(f)
     def decorated(*args, **kwargs):
-        data = request.get_json() or {}
-        errors = []
+        page = request.args.get('page', 1, type=int)
+        limit = request.args.get('limit', 20, type=int)
         
-        rating = data.get('rating')
-        if rating is None or not isinstance(rating, int) or rating < 1 or rating > 5:
-            errors.append('คะแนนต้องอยู่ระหว่าง 1-5')
+        if page < 1:
+            page = 1
+        if limit < 1:
+            limit = 1
+        if limit > 100:
+            limit = 100
         
-        content = data.get('content')
-        if content and len(content) > 5000:
-            errors.append('เนื้อหารีวิวต้องไม่เกิน 5000 ตัวอักษร')
-        
-        if errors:
-            return jsonify({'errors': errors}), 400
-        
+        request.pagination = {'page': page, 'limit': limit}
         return f(*args, **kwargs)
-    
-    return decorated
-
-
-def validate_author_data(f):
-    """Decorator to validate author creation/update data."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        data = request.get_json() or {}
-        errors = []
-        
-        name = data.get('name')
-        if not name or not isinstance(name, str) or not name.strip():
-            errors.append('ต้องระบุชื่อผู้แต่ง')
-        
-        if name and len(name) > 255:
-            errors.append('ชื่อผู้แต่งต้องไม่เกิน 255 ตัวอักษร')
-        
-        if errors:
-            return jsonify({'errors': errors}), 400
-        
-        return f(*args, **kwargs)
-    
-    return decorated
-
-
-def validate_publisher_data(f):
-    """Decorator to validate publisher creation/update data."""
-    @wraps(f)
-    def decorated(*args, **kwargs):
-        data = request.get_json() or {}
-        errors = []
-        
-        name = data.get('name')
-        if not name or not isinstance(name, str) or not name.strip():
-            errors.append('ต้องระบุชื่อสำนักพิมพ์')
-        
-        if name and len(name) > 255:
-            errors.append('ชื่อสำนักพิมพ์ต้องไม่เกิน 255 ตัวอักษร')
-        
-        if errors:
-            return jsonify({'errors': errors}), 400
-        
-        return f(*args, **kwargs)
-    
     return decorated

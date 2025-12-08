@@ -1,152 +1,108 @@
-"""User routes for authentication and profile management."""
+"""
+User routes for authentication and profile management.
+"""
 
-from flask import Blueprint, request, jsonify
-from app.models import User
-from app import db
-from app.utils import authenticate, require_admin, get_current_user, get_pagination
+from flask import Blueprint, request, jsonify, g
+from app.services.sheets import sheets_service
+from app.utils.auth import auth_required, auth_optional
 
 bp = Blueprint('users', __name__)
 
 
-@bp.route('/register', methods=['POST'])
-def register():
-    """Register a new user."""
-    data = request.get_json() or {}
+@bp.route('/me', methods=['GET'])
+@auth_required
+def get_current_user():
+    """Get current authenticated user."""
+    return jsonify(g.current_user)
+
+
+@bp.route('/me', methods=['PUT'])
+@auth_required
+def update_current_user():
+    """Update current user profile."""
+    data = request.get_json()
     
-    firebase_uid = data.get('firebase_uid')
-    email = data.get('email')
-    username = data.get('username')
-    display_name = data.get('display_name', username)
-    preferred_language = data.get('preferred_language', 'th')
+    allowed_fields = ['display_name', 'avatar_url', 'preferred_language']
+    update_data = {k: v for k, v in data.items() if k in allowed_fields}
     
-    if not email or not username:
+    if not update_data:
         return jsonify({
-            'error': 'Missing fields',
-            'message': 'ต้องระบุอีเมลและชื่อผู้ใช้'
+            'error': 'ไม่มีข้อมูลที่จะอัพเดท',
+            'error_en': 'No valid fields to update'
         }), 400
     
-    # Check existing user
-    existing = User.query.filter(
-        (User.firebase_uid == firebase_uid) | 
-        (User.email == email) | 
-        (User.username == username)
-    ).first()
+    updated = sheets_service.update('users', g.current_user['id'], update_data)
     
-    if existing:
-        if existing.firebase_uid == firebase_uid:
-            return jsonify({'user': existing.to_dict(), 'message': 'ผู้ใช้มีอยู่แล้วในระบบ'})
-        if existing.email == email:
-            return jsonify({'error': 'Email already exists', 'message': 'อีเมลนี้ถูกใช้งานแล้ว'}), 400
-        if existing.username == username:
-            return jsonify({'error': 'Username already exists', 'message': 'ชื่อผู้ใช้นี้ถูกใช้งานแล้ว'}), 400
-    
-    # Create new user
-    user = User(
-        firebase_uid=firebase_uid,
-        email=email,
-        username=username,
-        display_name=display_name,
-        preferred_language=preferred_language
-    )
-    
-    db.session.add(user)
-    db.session.commit()
-    
-    return jsonify({'user': user.to_dict(), 'message': 'ลงทะเบียนสำเร็จ'}), 201
-
-
-@bp.route('/profile', methods=['GET'])
-@authenticate
-def get_profile():
-    """Get current user's profile."""
-    user = get_current_user()
-    return jsonify({'user': user.to_dict()})
-
-
-@bp.route('/profile', methods=['PUT'])
-@authenticate
-def update_profile():
-    """Update current user's profile."""
-    user = get_current_user()
-    data = request.get_json() or {}
-    
-    if 'display_name' in data:
-        user.display_name = data['display_name']
-    if 'avatar_url' in data:
-        user.avatar_url = data['avatar_url']
-    if 'preferred_language' in data:
-        user.preferred_language = data['preferred_language']
-    
-    db.session.commit()
-    
-    return jsonify({'user': user.to_dict(), 'message': 'อัพเดทข้อมูลสำเร็จ'})
-
-
-@bp.route('/stats', methods=['GET'])
-@authenticate
-def get_stats():
-    """Get current user's statistics."""
-    from app.models import Favorite, Review, SearchHistory
-    
-    user = get_current_user()
-    
-    favorites_count = Favorite.query.filter_by(user_id=user.id).count()
-    reviews = Review.query.filter_by(user_id=user.id).all()
-    reviews_count = len(reviews)
-    avg_rating = sum(r.rating for r in reviews) / reviews_count if reviews_count > 0 else 0
-    searches_count = SearchHistory.query.filter_by(user_id=user.id).count()
+    if updated:
+        return jsonify(updated)
     
     return jsonify({
-        'stats': {
-            'total_favorites': favorites_count,
-            'total_reviews': reviews_count,
-            'average_rating': round(avg_rating, 2),
-            'total_searches': searches_count
-        }
-    })
+        'error': 'ไม่สามารถอัพเดทข้อมูลได้',
+        'error_en': 'Could not update user'
+    }), 500
 
 
-@bp.route('/', methods=['GET'])
-@authenticate
-@require_admin
-def get_all_users():
-    """Admin: Get all users."""
-    pagination = get_pagination()
+@bp.route('/<user_id>', methods=['GET'])
+@auth_optional
+def get_user(user_id):
+    """Get user by ID (public profile)."""
+    user = sheets_service.get_by_id('users', user_id)
     
-    total = User.query.count()
-    users = User.query.order_by(User.created_at.desc())\
-        .offset(pagination['offset'])\
-        .limit(pagination['limit'])\
-        .all()
-    
-    return jsonify({
-        'users': [u.to_dict() for u in users],
-        'pagination': {
-            'total': total,
-            'page': pagination['page'],
-            'limit': pagination['limit'],
-            'total_pages': (total + pagination['limit'] - 1) // pagination['limit']
-        }
-    })
-
-
-@bp.route('/<user_id>/role', methods=['PUT'])
-@authenticate
-@require_admin
-def update_user_role(user_id):
-    """Admin: Update a user's role."""
-    data = request.get_json() or {}
-    role = data.get('role')
-    
-    valid_roles = ['user', 'admin', 'moderator']
-    if role not in valid_roles:
-        return jsonify({'error': 'Invalid role', 'message': 'บทบาทไม่ถูกต้อง'}), 400
-    
-    user = User.query.get(user_id)
     if not user:
-        return jsonify({'error': 'User not found', 'message': 'ไม่พบผู้ใช้'}), 404
+        return jsonify({
+            'error': 'ไม่พบผู้ใช้',
+            'error_en': 'User not found'
+        }), 404
     
-    user.role = role
-    db.session.commit()
+    # Return public profile only
+    public_profile = {
+        'id': user['id'],
+        'username': user.get('username'),
+        'display_name': user.get('display_name'),
+        'avatar_url': user.get('avatar_url'),
+        'created_at': user.get('created_at')
+    }
     
-    return jsonify({'user': user.to_dict(), 'message': 'อัพเดทบทบาทสำเร็จ'})
+    return jsonify(public_profile)
+
+
+@bp.route('/<user_id>/reviews', methods=['GET'])
+def get_user_reviews(user_id):
+    """Get reviews by user."""
+    reviews = sheets_service.find_by_field('reviews', 'user_id', user_id)
+    
+    # Filter only approved reviews
+    approved_reviews = [r for r in reviews if r.get('is_approved', True)]
+    
+    # Enrich with book info
+    books = {b['id']: b for b in sheets_service.get_all('books')}
+    
+    for review in approved_reviews:
+        book = books.get(review.get('book_id'), {})
+        review['book_title'] = book.get('title')
+        review['book_title_thai'] = book.get('title_thai')
+        review['book_cover'] = book.get('cover_image_url')
+    
+    return jsonify(approved_reviews)
+
+
+@bp.route('/<user_id>/favorites', methods=['GET'])
+def get_user_favorites(user_id):
+    """Get favorites by user."""
+    favorites = sheets_service.find_by_field('favorites', 'user_id', user_id)
+    
+    # Enrich with book info
+    books = {b['id']: b for b in sheets_service.get_all('books')}
+    
+    result = []
+    for fav in favorites:
+        book = books.get(fav.get('book_id'), {})
+        if book:
+            result.append({
+                'id': fav['id'],
+                'book_id': fav['book_id'],
+                'created_at': fav.get('created_at'),
+                'book': book
+            })
+    
+    return jsonify(result)

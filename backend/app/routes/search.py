@@ -1,42 +1,49 @@
-"""Search and recommendation routes."""
+"""
+Search routes for books, authors, and publishers.
+"""
 
-from flask import Blueprint, request, jsonify
-from app.services import search_service, recommendation_service
-from app.utils import optional_auth, authenticate, get_current_user, get_pagination, validate_uuid
+from flask import Blueprint, request, jsonify, g
+from app.services.search import search_service
+from app.utils.auth import auth_optional
+from app.utils.validation import validate_pagination
 
 bp = Blueprint('search', __name__)
 
 
-@bp.route('/', methods=['GET'])
-@optional_auth
-def search_books():
+@bp.route('', methods=['GET'])
+@auth_optional
+@validate_pagination
+def search():
     """Search books with filters."""
-    pagination = get_pagination()
-    
     query = request.args.get('q', '')
-    filters = {
-        'type': request.args.get('type'),
-        'genres': request.args.getlist('genres'),
-        'tags': request.args.getlist('tags'),
-        'status': request.args.get('status'),
-        'author_id': request.args.get('author_id'),
-        'publisher_id': request.args.get('publisher_id'),
-        'min_rating': request.args.get('min_rating'),
-        'from_year': request.args.get('from_year'),
-        'to_year': request.args.get('to_year'),
-        'sort_by': request.args.get('sort_by'),
-        'include_nsfw': request.args.get('include_nsfw') == 'true'
-    }
+    page = request.pagination['page']
+    limit = request.pagination['limit']
     
-    # Remove empty filters
-    filters = {k: v for k, v in filters.items() if v}
+    # Build filters
+    filters = {}
+    if request.args.get('type'):
+        filters['type'] = request.args.get('type')
+    if request.args.get('status'):
+        filters['status'] = request.args.get('status')
+    if request.args.get('genre'):
+        filters['genre'] = request.args.get('genre')
+    if request.args.get('min_rating'):
+        filters['min_rating'] = float(request.args.get('min_rating'))
+    if request.args.get('max_rating'):
+        filters['max_rating'] = float(request.args.get('max_rating'))
+    if request.args.get('is_nsfw') is not None:
+        filters['is_nsfw'] = request.args.get('is_nsfw').lower() == 'true'
     
-    results = search_service.search_books(query, filters, pagination['page'], pagination['limit'])
+    results = search_service.search_books(query, filters if filters else None, page, limit)
     
-    # Save search history for logged-in users
-    user = get_current_user()
-    if user and query:
-        search_service.save_search_history(user.id, query, filters, results['pagination']['total'])
+    # Record search history
+    if g.current_user and query:
+        search_service.record_search(
+            g.current_user['id'],
+            query,
+            filters,
+            results['total']
+        )
     
     return jsonify(results)
 
@@ -45,87 +52,22 @@ def search_books():
 def autocomplete():
     """Get autocomplete suggestions."""
     query = request.args.get('q', '')
-    limit = min(20, int(request.args.get('limit', 10)))
+    limit = request.args.get('limit', 10, type=int)
     
     suggestions = search_service.get_autocomplete_suggestions(query, limit)
     
     return jsonify(suggestions)
 
 
-@bp.route('/filters', methods=['GET'])
-def get_filters():
-    """Get available filter options."""
-    filters = search_service.get_available_filters()
-    
-    return jsonify({'filters': filters})
+@bp.route('/genres', methods=['GET'])
+def get_genres():
+    """Get all available genres."""
+    genres = search_service.get_genres()
+    return jsonify(genres)
 
 
-@bp.route('/recommendations', methods=['GET'])
-@optional_auth
-def get_recommendations():
-    """Get personalized recommendations."""
-    user = get_current_user()
-    limit = min(50, int(request.args.get('limit', 20)))
-    
-    user_id = user.id if user else None
-    recommendations = recommendation_service.get_recommendations(user_id, limit)
-    
-    return jsonify({'recommendations': recommendations})
-
-
-@bp.route('/similar/<book_id>', methods=['GET'])
-def get_similar_books(book_id):
-    """Get similar books using content-based filtering."""
-    if not validate_uuid(book_id):
-        return jsonify({'error': 'Invalid ID', 'message': 'รหัสไม่ถูกต้อง'}), 400
-    
-    limit = min(20, int(request.args.get('limit', 10)))
-    
-    recommendation_service.initialize()
-    similar_books = recommendation_service.get_content_based_recommendations(book_id, limit)
-    
-    return jsonify({'similar_books': similar_books})
-
-
-@bp.route('/popular', methods=['GET'])
-def get_popular():
-    """Get popular books."""
-    limit = min(50, int(request.args.get('limit', 20)))
-    
-    books = recommendation_service.get_popular_recommendations(limit)
-    
-    return jsonify({'books': books})
-
-
-@bp.route('/popular-searches', methods=['GET'])
-def get_popular_searches():
-    """Get popular search queries."""
-    from app.models import SearchHistory
-    from sqlalchemy import func
-    from app import db
-    
-    limit = min(20, int(request.args.get('limit', 10)))
-    
-    results = db.session.query(
-        SearchHistory.query,
-        func.count(SearchHistory.id).label('count')
-    ).group_by(SearchHistory.query)\
-     .order_by(func.count(SearchHistory.id).desc())\
-     .limit(limit)\
-     .all()
-    
-    return jsonify({
-        'searches': [{'query': q, 'count': c} for q, c in results]
-    })
-
-
-@bp.route('/recent-searches', methods=['GET'])
-@authenticate
-def get_recent_searches():
-    """Get user's recent searches."""
-    user = get_current_user()
-    limit = min(20, int(request.args.get('limit', 10)))
-    
-    searches = search_service.get_recent_searches(user.id, limit)
-    
-    return jsonify({'searches': searches})
+@bp.route('/tags', methods=['GET'])
+def get_tags():
+    """Get all available tags."""
+    tags = search_service.get_tags()
+    return jsonify(tags)
