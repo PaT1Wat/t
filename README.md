@@ -1,239 +1,334 @@
 # MangaRec - ระบบแนะนำมังงะและนิยาย
 
-ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย **Python Backend** + **React Frontend** + **Google Sheets** สำหรับจัดเก็บข้อมูล
+ระบบแนะนำหนังสือมังงะและนิยายอัจฉริยะ พัฒนาด้วย **Python Backend** + **React Frontend** + **Google Sheets** + **Supabase Auth**
+
+---
+
+## 📋 สารบัญ
+- [Features](#-features)
+- [Tech Stack](#-tech-stack)
+- [การติดตั้ง](#-การติดตั้ง)
+  - [Backend Setup](#backend-setup)
+  - [Frontend Setup](#frontend-setup)
+- [การแก้ไขปัญหา](#-การแก้ไขปัญหา-troubleshooting)
+
+---
 
 ## 🌟 Features
 
-### User Features
-- 🔐 **Authentication** - เข้าสู่ระบบด้วย Email หรือ Google (Firebase Auth)
-- 🔍 **Search** - ค้นหาแบบ Full-text พร้อม Autocomplete รองรับภาษาไทย
-- 🏷️ **Filters** - กรองตามประเภท, หมวดหมู่, แท็ก, คะแนน และอื่นๆ
+- 🔐 **Authentication** - เข้าสู่ระบบด้วย Email (Supabase Auth)
+- 🔍 **Search** - ค้นหาแบบ Full-text รองรับภาษาไทย
 - 📖 **Book Details** - ดูรายละเอียดหนังสือ, รีวิว และหนังสือที่คล้ายกัน
 - ❤️ **Favorites** - บันทึกหนังสือที่ชอบ
 - ⭐ **Reviews** - เขียนรีวิวและให้คะแนน
-- 🎯 **Recommendations** - รับคำแนะนำหนังสือที่ตรงใจจาก AI
+- 🎯 **Recommendations** - รับคำแนะนำหนังสือจาก AI
 
-### Admin Features
-- 📚 **Book Management** - เพิ่ม/แก้ไข/ลบหนังสือ
-- 👤 **Author Management** - จัดการข้อมูลผู้แต่ง
-- 🏢 **Publisher Management** - จัดการข้อมูลสำนักพิมพ์
-- 🛡️ **Review Moderation** - ตรวจสอบและอนุมัติรีวิว
-
-### AI Recommendation System
-- **Content-Based Filtering** - TF-IDF + Cosine Similarity สำหรับหาหนังสือที่คล้ายกัน (scikit-learn)
-- **Collaborative Filtering** - KNN + SVD สำหรับแนะนำจากพฤติกรรมผู้ใช้ (scikit-learn)
-- **Hybrid Approach** - ผสมผสานทั้งสองวิธีเพื่อคำแนะนำที่แม่นยำ
+---
 
 ## 🛠️ Tech Stack
 
-### Backend (Python)
+### Backend
 - **Flask** - Web Framework
-- **Google Sheets API** - Data Storage (gspread)
-- **Firebase Admin SDK** - Authentication
-- **scikit-learn** - TF-IDF, Cosine Similarity, KNN, SVD
+- **Google Sheets API** - Data Storage
+- **Supabase** - Authentication (JWT)
+- **scikit-learn** - Recommendation Engine
 - **pandas/numpy** - Data Processing
 
-### Frontend (React + JavaScript + CSS)
+### Frontend
 - **React 18** - UI Library
 - **React Router** - Navigation
-- **TailwindCSS** - Styling (via CDN)
+- **TailwindCSS** - Styling
+- **Supabase JS** - Authentication
 - **Axios** - HTTP Client
-- **Firebase SDK** - Authentication
 
-## 📁 Project Structure
+---
 
+## 🚀 การติดตั้ง
+
+### Prerequisites (สิ่งที่ต้องติดตั้งก่อน)
+
+#### 1. Python 3.9+
+- ดาวน์โหลด: https://www.python.org/downloads/
+- ✅ ตอนติดตั้ง **เลือก "Add Python to PATH"**
+- ตรวจสอบ:
+```bash
+python --version
 ```
-├── backend/
-│   ├── app/
-│   │   ├── routes/           # API route blueprints
-│   │   ├── services/         # Google Sheets, Recommendation & Search
-│   │   ├── utils/            # Auth & Validation helpers
-│   │   └── __init__.py       # Flask app factory
-│   ├── tests/                # pytest tests
-│   ├── requirements.txt
-│   └── run.py                # Entry point
-│
-└── frontend/
-    ├── public/               # Static assets
-    ├── src/
-    │   ├── components/       # React components
-    │   ├── pages/            # Page components
-    │   ├── services/         # API & Firebase services
-    │   ├── context/          # Auth context
-    │   ├── styles/           # CSS styles
-    │   └── App.js            # Main app component
-    ├── package.json
-    └── .env.example
+**✅ ผ่าน:** `Python 3.9.x` หรือสูงกว่า
+
+---
+
+#### 2. Node.js 18+ & npm
+- ดาวน์โหลด: https://nodejs.org/ (เลือก LTS version)
+- ตรวจสอบ:
+```bash
+node --version
+npm --version
 ```
+**✅ ผ่าน:** `v18.x.x` หรือสูงกว่า และ `9.x.x` หรือสูงกว่า
 
-## 🚀 Getting Started
+---
 
-### Prerequisites
-- Python 3.9+
-- Node.js 18+ & npm
-- Google Cloud Project with Sheets API enabled
-- Firebase Project (for authentication)
+#### 3. Git
+- ดาวน์โหลด: https://git-scm.com/downloads
+- ตรวจสอบ:
+```bash
+git --version
+```
+**✅ ผ่าน:** `git version 2.x.x`
 
-### Google Sheets Setup
+---
 
-1. Create a new Google Spreadsheet
-2. Enable Google Sheets API in Google Cloud Console
-3. Create a Service Account and download JSON credentials
-4. Share the spreadsheet with the service account email
+#### 4. Supabase Account (ฟรี)
+1. ไปที่ https://supabase.com/
+2. สมัครสมาชิก / เข้าสู่ระบบ
+3. สร้าง Project ใหม่
+4. ไปที่ **Settings > API** เพื่อหา:
+   - `Project URL` (เช่น `https://xxxxx.supabase.co`)
+   - `anon public key` (ใช้ใน frontend)
+   - `service_role key` (ใช้ใน backend)
 
-The system will automatically create these sheets:
-- Users, Books, Authors, Publishers, Reviews, Favorites, SearchHistory, ReadingHistory
+---
 
-### Backend Setup
+#### 5. Google Cloud Project (สำหรับ Google Sheets API)
+1. ไปที่ https://console.cloud.google.com/
+2. สร้าง Project ใหม่
+3. เปิดใช้งาน **Google Sheets API**
+4. สร้าง **Service Account** และดาวน์โหลด JSON credentials
+5. สร้าง Google Spreadsheet และแชร์ให้ Service Account email
 
-1. Navigate to backend directory:
+---
+
+## Backend Setup
+
+### 1. เข้าไปที่โฟลเดอร์ backend
 ```bash
 cd backend
 ```
 
-2. Create virtual environment:
+### 2. สร้าง Virtual Environment
 ```bash
 python -m venv venv
-source venv/bin/activate  # Linux/Mac
-# or: venv\Scripts\activate  # Windows
 ```
 
-3. Install dependencies:
+**✅ ผ่าน - จะเห็น output:**
+```
+(ไม่มี output = สำเร็จ)
+```
+และจะมีโฟลเดอร์ `venv` ถูกสร้างขึ้น
+
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
+```
+'python' is not recognized as an internal or external command
+```
+**วิธีแก้:** ติดตั้ง Python จาก https://www.python.org/downloads/ และเลือก "Add Python to PATH"
+
+---
+
+### 3. Activate Virtual Environment
+
+**Windows:**
+```bash
+venv\Scripts\activate
+```
+
+**✅ ผ่าน - จะเห็น:**
+```
+(venv) C:\Users\...\backend>
+```
+(มี `(venv)` นำหน้า command prompt)
+
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
+```
+venv\Scripts\activate : cannot be loaded because running scripts is disabled
+```
+**วิธีแก้:** รันใน PowerShell ในฐานะ Administrator:
+```powershell
+Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser
+```
+
+---
+
+### 4. ติดตั้ง Dependencies
 ```bash
 pip install -r requirements.txt
 ```
 
-4. Create `.env` file from example:
-```bash
-cp .env.example .env
+**✅ ผ่าน - จะเห็น:**
+```
+Successfully installed flask-3.0.0 flask-cors-4.0.0 ...
 ```
 
-5. Configure environment variables:
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
+```
+ERROR: Could not find a version that satisfies the requirement
+```
+**วิธีแก้:** อัพเดท pip:
+```bash
+python -m pip install --upgrade pip
+pip install -r requirements.txt
+```
+
+---
+
+### 5. สร้างไฟล์ .env
+```bash
+copy .env.example .env
+```
+แล้วแก้ไขค่าใน `.env`:
 ```env
-# Google Sheets
-GOOGLE_CREDENTIALS_JSON={"type":"service_account",...}
-# Or use file path:
+# Server Configuration
+FLASK_ENV=development
+FLASK_DEBUG=True
+SECRET_KEY=your-secret-key
+
+# Supabase Configuration
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_KEY=your-service-role-key
+
+# Google Sheets Configuration
 GOOGLE_CREDENTIALS_FILE=./credentials.json
 GOOGLE_SPREADSHEET_ID=your-spreadsheet-id
 
-# Firebase
-FIREBASE_CREDENTIALS_JSON={"type":"service_account",...}
-
-# App
-SECRET_KEY=your-secret-key
-CORS_ORIGINS=http://localhost:3000
+# CORS Configuration
+CORS_ORIGINS=http://localhost:3000,http://localhost:5000
 ```
 
-6. Run the server:
+---
+
+### 6. รัน Backend Server
 ```bash
 python run.py
 ```
 
-The API will be available at `http://localhost:5000`
+**✅ ผ่าน - จะเห็น:**
+```
+ * Serving Flask app 'app'
+ * Debug mode: on
+ * Running on http://127.0.0.1:5000
+```
 
-### Frontend Setup
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
 
-1. Navigate to frontend directory:
+**Error 1: DLL load failed (scikit-learn)**
+```
+ImportError: DLL load failed while importing _loss
+```
+**วิธีแก้:** 
+1. เปิด Windows Security > Virus & threat protection > Exclusions
+2. เพิ่ม folder: `backend\venv\Lib\site-packages\sklearn`
+
+**Error 2: No module named 'xxx'**
+```
+ModuleNotFoundError: No module named 'flask'
+```
+**วิธีแก้:** ตรวจสอบว่า activate venv แล้ว และรัน:
+```bash
+pip install -r requirements.txt
+```
+
+---
+
+## Frontend Setup
+
+### 1. เข้าไปที่โฟลเดอร์ frontend
 ```bash
 cd frontend
 ```
 
-2. Install dependencies:
+### 2. ติดตั้ง Dependencies
 ```bash
 npm install
 ```
 
-3. Create `.env` file from example:
+**✅ ผ่าน - จะเห็น:**
+```
+added 1500 packages, and audited 1547 packages in 30s
+```
+
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
+```
+npm ERR! code ENOENT
+```
+**วิธีแก้:** ตรวจสอบว่าอยู่ในโฟลเดอร์ frontend และมีไฟล์ `package.json`
+
+---
+
+### 3. สร้างไฟล์ .env
 ```bash
-cp .env.example .env
+copy .env.example .env
 ```
-
-4. Configure Firebase:
+แล้วแก้ไขค่าใน `.env`:
 ```env
-REACT_APP_FIREBASE_API_KEY=your-api-key
-REACT_APP_FIREBASE_AUTH_DOMAIN=your-project.firebaseapp.com
-REACT_APP_FIREBASE_PROJECT_ID=your-project-id
+# Supabase Configuration
+REACT_APP_SUPABASE_URL=https://your-project.supabase.co
+REACT_APP_SUPABASE_ANON_KEY=your-anon-key
+
+# API URL
+REACT_APP_API_URL=http://localhost:5000/api
 ```
 
-5. Run the development server:
+---
+
+### 4. รัน Frontend Server
 ```bash
 npm start
 ```
 
-The web UI will be available at `http://localhost:3000`
-
-## 📡 API Endpoints
-
-### Authentication
-- `GET /api/users/me` - Get current user profile
-- `PUT /api/users/me` - Update profile
-
-### Books
-- `GET /api/books` - List all books
-- `GET /api/books/<id>` - Get book details
-- `GET /api/books/<id>/similar` - Get similar books
-- `GET /api/books/recommendations` - Personalized recommendations
-- `POST /api/books` - Create book (admin)
-- `PUT /api/books/<id>` - Update book (admin)
-- `DELETE /api/books/<id>` - Delete book (admin)
-
-### Search
-- `GET /api/search?q=query` - Search books with filters
-- `GET /api/search/autocomplete?q=query` - Autocomplete suggestions
-- `GET /api/search/genres` - Available genres
-- `GET /api/search/tags` - Available tags
-
-### Reviews
-- `GET /api/reviews/book/<book_id>` - Get book reviews
-- `POST /api/reviews` - Create review
-- `PUT /api/reviews/<id>` - Update review
-- `DELETE /api/reviews/<id>` - Delete review
-
-### Favorites
-- `GET /api/favorites` - Get user favorites
-- `POST /api/favorites` - Add to favorites
-- `DELETE /api/favorites/<book_id>` - Remove from favorites
-
-## 🗄️ Data Schema (Google Sheets)
-
-### Sheets
-- **Users** - User accounts (id, firebase_uid, email, username, display_name, role, ...)
-- **Books** - Book information (id, title, title_thai, description, type, status, genres, tags, ...)
-- **Authors** - Author information (id, name, name_thai, bio, ...)
-- **Publishers** - Publisher information
-- **Reviews** - User reviews and ratings
-- **Favorites** - User favorite books
-- **SearchHistory** - Search history for recommendations
-- **ReadingHistory** - Reading behavior tracking
-
-## 🌐 Thai Language Support
-
-- Full-text search supports Thai characters
-- All UI text in Thai
-- Thai fonts (Noto Sans Thai) for better readability
-- Dual language support for book titles and descriptions
-
-## 🧪 Testing
-
-```bash
-# Backend tests
-cd backend
-pip install pytest
-pytest
-
-# Frontend tests
-cd frontend
-npm test
+**✅ ผ่าน - จะเห็น:**
 ```
+Compiled successfully!
+
+You can now view manga-recommendation-frontend in the browser.
+
+  Local:            http://localhost:3000
+```
+และ browser จะเปิดอัตโนมัติ
+
+**❌ ไม่ผ่าน - ถ้าเจอ error:**
+
+**Error 1: Module not found**
+```
+Module not found: Error: Can't resolve 'xxx'
+```
+**วิธีแก้:** รัน:
+```bash
+npm install
+```
+
+**Error 2: Port already in use**
+```
+Something is already running on port 3000
+```
+**วิธีแก้:** กด `Y` เพื่อใช้ port อื่น หรือปิดโปรแกรมที่ใช้ port 3000
+
+---
+
+## 🔧 การแก้ไขปัญหา (Troubleshooting)
+
+### หน้าเว็บว่างเปล่า
+1. เปิด Browser DevTools (F12) > Console
+2. ดู error message
+3. ตรวจสอบว่า backend รันอยู่ที่ `http://localhost:5000`
+4. ตรวจสอบ `.env` ว่า `REACT_APP_API_URL` ถูกต้อง
+
+### API Error 401 Unauthorized
+- ตรวจสอบ Supabase credentials ใน `.env` ทั้ง frontend และ backend
+
+### CORS Error
+- ตรวจสอบว่า `CORS_ORIGINS` ใน backend `.env` มี `http://localhost:3000`
+
+---
+
+## 📱 การใช้งาน
+
+1. เปิด browser ไปที่ `http://localhost:3000`
+2. สมัครสมาชิกหรือเข้าสู่ระบบ
+3. ค้นหาหนังสือ, ดูรายละเอียด, เพิ่มรายการโปรด
+4. รับคำแนะนำหนังสือจากระบบ AI
+
+---
 
 ## 📝 License
 
-ISC License
-
-## 🤝 Contributing
-
-1. Fork the repository
-2. Create your feature branch
-3. Commit your changes
-4. Push to the branch
-5. Open a Pull Request
+MIT License - สามารถใช้งานได้อย่างอิสระ
