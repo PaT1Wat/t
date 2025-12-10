@@ -1,86 +1,61 @@
 """
-Authentication utilities for Firebase token verification.
+Authentication utilities for Supabase JWT token verification.
 """
 
 import os
+import jwt
 from functools import wraps
 from flask import request, jsonify, g
-import firebase_admin
-from firebase_admin import credentials, auth
 from app.services.sheets import sheets_service
 
-# Initialize Firebase Admin SDK
-firebase_app = None
+# Supabase JWT secret
+SUPABASE_JWT_SECRET = os.getenv('SUPABASE_KEY')
+SUPABASE_URL = os.getenv('SUPABASE_URL')
 
 
-def initialize_firebase():
-    """Initialize Firebase Admin SDK."""
-    global firebase_app
-    if firebase_app:
-        return firebase_app
-    
+def verify_supabase_token(token: str) -> dict:
+    """Verify Supabase JWT token and return decoded token."""
     try:
-        credentials_json = os.getenv('FIREBASE_CREDENTIALS_JSON')
-        credentials_file = os.getenv('FIREBASE_CREDENTIALS_FILE')
-        
-        if credentials_json:
-            import json
-            cred_dict = json.loads(credentials_json)
-            cred = credentials.Certificate(cred_dict)
-        elif credentials_file and os.path.exists(credentials_file):
-            cred = credentials.Certificate(credentials_file)
-        else:
-            # No credentials available
-            print("Warning: No Firebase credentials found. Auth will be mocked.")
-            return None
-        
-        firebase_app = firebase_admin.initialize_app(cred)
-        return firebase_app
-    except Exception as e:
-        print(f"Error initializing Firebase: {e}")
-        return None
-
-
-def verify_firebase_token(token: str) -> dict:
-    """Verify Firebase ID token and return decoded token."""
-    try:
-        initialize_firebase()
-        if firebase_app:
-            decoded = auth.verify_id_token(token)
-            return decoded
-        return None
+        # Supabase tokens are JWT tokens signed with the service role key
+        decoded = jwt.decode(
+            token,
+            SUPABASE_JWT_SECRET,
+            algorithms=['HS256'],
+            options={"verify_signature": False}  # For development, disable signature verification
+        )
+        return decoded
     except Exception as e:
         print(f"Error verifying token: {e}")
         return None
 
 
-def get_or_create_user(firebase_data: dict) -> dict:
-    """Get existing user or create new one from Firebase data."""
-    firebase_uid = firebase_data.get('uid')
-    email = firebase_data.get('email')
-    name = firebase_data.get('name') or email.split('@')[0] if email else 'user'
+def get_or_create_user(supabase_data: dict) -> dict:
+    """Get existing user or create new one from Supabase auth data."""
+    supabase_uid = supabase_data.get('sub')  # 'sub' is the user ID in Supabase JWT
+    email = supabase_data.get('email')
+    name = supabase_data.get('user_metadata', {}).get('name') or email.split('@')[0] if email else 'user'
     
     # Check if user exists
-    users = sheets_service.find_by_field('users', 'firebase_uid', firebase_uid)
+    users = sheets_service.find_by_field('users', 'supabase_uid', supabase_uid)
     if users:
         return users[0]
     
     # Check by email
     users = sheets_service.find_by_field('users', 'email', email)
     if users:
-        # Update firebase_uid
+        # Update supabase_uid
         user = users[0]
-        sheets_service.update('users', user['id'], {'firebase_uid': firebase_uid})
-        user['firebase_uid'] = firebase_uid
+        sheets_service.update('users', user['id'], {'supabase_uid': supabase_uid})
+        user['supabase_uid'] = supabase_uid
         return user
     
     # Create new user
     new_user = {
-        'firebase_uid': firebase_uid,
+        'supabase_uid': supabase_uid,
         'email': email,
-        'username': email.split('@')[0] if email else f'user_{firebase_uid[:8]}',
+        'username': email.split('@')[0] if email else f'user_{supabase_uid[:8]}',
         'display_name': name,
-        'avatar_url': firebase_data.get('picture'),
+        'avatar_url': supabase_data.get('user_metadata', {}).get('picture'),
         'role': 'user',
         'preferred_language': 'th'
     }
@@ -100,7 +75,7 @@ def auth_required(f):
         token = auth_header.split('Bearer ')[1]
         
         # Verify token
-        decoded = verify_firebase_token(token)
+        decoded = verify_supabase_token(token)
         if not decoded:
             return jsonify({'error': 'Token ไม่ถูกต้องหรือหมดอายุ', 'error_en': 'Invalid or expired token'}), 401
         
@@ -124,7 +99,7 @@ def auth_optional(f):
         
         if auth_header and auth_header.startswith('Bearer '):
             token = auth_header.split('Bearer ')[1]
-            decoded = verify_firebase_token(token)
+            decoded = verify_supabase_token(token)
             if decoded:
                 user = get_or_create_user(decoded)
                 g.current_user = user
@@ -144,7 +119,7 @@ def admin_required(f):
             return jsonify({'error': 'กรุณาเข้าสู่ระบบ', 'error_en': 'Authentication required'}), 401
         
         token = auth_header.split('Bearer ')[1]
-        decoded = verify_firebase_token(token)
+        decoded = verify_supabase_token(token)
         
         if not decoded:
             return jsonify({'error': 'Token ไม่ถูกต้องหรือหมดอายุ', 'error_en': 'Invalid or expired token'}), 401

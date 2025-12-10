@@ -8,7 +8,7 @@ import LoadingSpinner from '../components/LoadingSpinner';
 
 const BookDetailPage = () => {
   const { id } = useParams();
-  const { isAuthenticated, profile } = useAuth();
+  const { isAuthenticated } = useAuth();
   const [book, setBook] = useState(null);
   const [reviews, setReviews] = useState([]);
   const [ratingDistribution, setRatingDistribution] = useState({});
@@ -22,10 +22,7 @@ const BookDetailPage = () => {
   const [submitting, setSubmitting] = useState(false);
 
   useEffect(() => {
-    fetchBookDetails();
-  }, [id]);
-
-  const fetchBookDetails = async () => {
+    const fetchBookDetails = async () => {
     setLoading(true);
     try {
       // Fetch book details
@@ -46,15 +43,17 @@ const BookDetailPage = () => {
         try {
           const favResponse = await favoritesApi.check(id);
           setIsFavorite(favResponse.data.is_favorite);
-        } catch (error) {
-          console.error('Error checking favorite status:', error);
+          } catch (error) {
+            console.error('Error checking favorite status:', error);
+          }
         }
+      } catch (error) {
+        console.error('Error fetching book details:', error);
       }
-    } catch (error) {
-      console.error('Error fetching book details:', error);
-    }
-    setLoading(false);
-  };
+      setLoading(false);
+    };
+    fetchBookDetails();
+  }, [id, isAuthenticated]);
 
   const handleToggleFavorite = async () => {
     if (!isAuthenticated) {

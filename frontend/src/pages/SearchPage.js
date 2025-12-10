@@ -23,47 +23,53 @@ const SearchPage = () => {
   const [page, setPage] = useState(parseInt(searchParams.get('page') || '1'));
 
   useEffect(() => {
+    const fetchGenres = async () => {
+      try {
+        const response = await searchApi.getGenres();
+        setGenres(response.data);
+      } catch (error) {
+        console.error('Error fetching genres:', error);
+      }
+    };
     fetchGenres();
   }, []);
 
   useEffect(() => {
+    const fetchBooks = async () => {
+      setLoading(true);
+      try {
+        const currentQuery = searchParams.get('q') || '';
+        const currentPage = parseInt(searchParams.get('page') || '1');
+        const currentFilters = {
+          type: searchParams.get('type') || '',
+          status: searchParams.get('status') || '',
+          genre: searchParams.get('genre') || '',
+          min_rating: searchParams.get('min_rating') || '',
+        };
+
+        if (!currentQuery && !Object.values(currentFilters).some(v => v)) {
+          setBooks([]);
+          setLoading(false);
+          return;
+        }
+
+        const response = await searchApi.search(currentQuery, currentPage, currentFilters);
+        setBooks(response.data.results);
+        setTotalResults(response.data.total);
+        setTotalPages(response.data.total_pages);
+      } catch (error) {
+        console.error('Error fetching books:', error);
+        setBooks([]);
+      } finally {
+        setLoading(false);
+      }
+    };
+
     const q = searchParams.get('q') || '';
     setQuery(q);
     setPage(parseInt(searchParams.get('page') || '1'));
     fetchBooks();
   }, [searchParams]);
-
-  const fetchGenres = async () => {
-    try {
-      const response = await searchApi.getGenres();
-      setGenres(response.data);
-    } catch (error) {
-      console.error('Error fetching genres:', error);
-    }
-  };
-
-  const fetchBooks = async () => {
-    setLoading(true);
-    try {
-      const currentQuery = searchParams.get('q') || '';
-      const currentPage = parseInt(searchParams.get('page') || '1');
-      const currentFilters = {
-        type: searchParams.get('type') || '',
-        status: searchParams.get('status') || '',
-        genre: searchParams.get('genre') || '',
-        min_rating: searchParams.get('min_rating') || '',
-      };
-
-      const response = await searchApi.search(currentQuery, currentFilters, currentPage, 20);
-      setBooks(response.data.results);
-      setTotalResults(response.data.total);
-      setTotalPages(response.data.total_pages);
-    } catch (error) {
-      console.error('Error searching books:', error);
-      setBooks([]);
-    }
-    setLoading(false);
-  };
 
   const handleSearch = (e) => {
     e.preventDefault();

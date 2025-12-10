@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { onAuthChange, logout as firebaseLogout, getIdToken } from '../services/firebase';
+import { supabase, logout as supabaseLogout } from '../services/supabase';
 import { usersApi } from '../services/api';
 
 const AuthContext = createContext(null);
@@ -18,29 +18,38 @@ export const AuthProvider = ({ children }) => {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const unsubscribe = onAuthChange(async (firebaseUser) => {
-      setUser(firebaseUser);
-      
-      if (firebaseUser) {
-        try {
-          const response = await usersApi.getCurrentUser();
-          setProfile(response.data);
-        } catch (error) {
-          console.error('Error fetching user profile:', error);
-          setProfile(null);
-        }
-      } else {
-        setProfile(null);
-      }
-      
+    // Get initial session
+    supabase.auth.getSession().then(({ data: { session } }) => {
+      setUser(session?.user || null);
       setLoading(false);
     });
 
-    return () => unsubscribe();
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(
+      async (event, session) => {
+        setUser(session?.user || null);
+        
+        if (session?.user) {
+          try {
+            const response = await usersApi.getCurrentUser();
+            setProfile(response.data);
+          } catch (error) {
+            console.error('Error fetching user profile:', error);
+            setProfile(null);
+          }
+        } else {
+          setProfile(null);
+        }
+        
+        setLoading(false);
+      }
+    );
+
+    return () => subscription.unsubscribe();
   }, []);
 
   const logout = async () => {
-    await firebaseLogout();
+    await supabaseLogout();
     setUser(null);
     setProfile(null);
   };

@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { getIdToken } from './firebase';
+import { supabase } from './supabase';
 
 const API_BASE_URL = process.env.REACT_APP_API_URL || '/api';
 
@@ -13,9 +13,9 @@ const api = axios.create({
 
 // Request interceptor to add auth token
 api.interceptors.request.use(async (config) => {
-  const token = await getIdToken();
-  if (token) {
-    config.headers.Authorization = `Bearer ${token}`;
+  const { data: { session } } = await supabase.auth.getSession();
+  if (session?.access_token) {
+    config.headers.Authorization = `Bearer ${session.access_token}`;
   }
   return config;
 });
